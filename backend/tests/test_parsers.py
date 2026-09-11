@@ -7,6 +7,12 @@ def test_registry_loads_all_parsers():
     assert {"rfc5424", "cef", "leef", "json", "jsonl", "xml", "csv", "windows_evtx"}.issubset(ids)
 
 
+def test_registry_loads_plugin_parsers_from_disk():
+    reg = get_registry()
+    ids = set(reg.list_metadata().keys())
+    assert {"checkpoint-fw", "cisco-asa", "fortigate", "generic-syslog", "openvpn", "paloalto", "snort-ids", "squid-proxy"}.issubset(ids)
+
+
 def test_cef_detection_and_parse():
     raw = ("CEF:0|Vendor|Prod|1.0|4625|Failed Logon|7|"
            "rt=2026-01-15T10:22:03Z src=203.0.113.5 suser=administrator outcome=failure")
