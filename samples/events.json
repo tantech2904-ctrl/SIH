@@ -1,0 +1,12 @@
+{
+  "@timestamp": "2026-01-15T10:40:00Z",
+  "event_type": "authentication",
+  "action": "login",
+  "user": "alice",
+  "src_ip": "198.51.100.10",
+  "status": "failure",
+  "vendor": "ExampleIdP",
+  "product": "SSO",
+  "severity": "MEDIUM",
+  "message": "Login failed for alice from 198.51.100.10"
+}

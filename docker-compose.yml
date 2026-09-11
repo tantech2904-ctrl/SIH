@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ulpf-postgres
+    environment:
+      POSTGRES_USER: ulpf
+      POSTGRES_PASSWORD: ulpf
+      POSTGRES_DB: ulpf
+    ports:
+      - "5432:5432"
+    volumes:
+      - ulpf_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ulpf"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ulpf-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: ulpf-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ulpfadmin
+      MINIO_ROOT_PASSWORD: ulpfadminsecret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ulpf_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ulpf-backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ulpfadmin
+      MINIO_SECRET_KEY: ulpfadminsecret
+      MINIO_BUCKET: ulpf-raw
+      MINIO_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic -c alembic/alembic.ini upgrade head &&
+             python -m app.db.init_db &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ulpf-worker
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ulpfadmin
+      MINIO_SECRET_KEY: ulpfadminsecret
+      MINIO_BUCKET: ulpf-raw
+      MINIO_SECURE: "false"
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=4
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ulpf-frontend
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  ulpf_pg:
+  ulpf_minio:
