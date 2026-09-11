@@ -4,7 +4,7 @@ from app.parsers.registry import get_registry
 def test_registry_loads_all_parsers():
     reg = get_registry()
     ids = set(reg.list_metadata().keys())
-    assert {"rfc5424", "cef", "leef", "json", "jsonl", "xml", "csv"}.issubset(ids)
+    assert {"rfc5424", "cef", "leef", "json", "jsonl", "xml", "csv", "windows_evtx"}.issubset(ids)
 
 
 def test_cef_detection_and_parse():
@@ -89,6 +89,34 @@ def test_csv_detection_and_parse():
     assert pr.success
     assert pr.fields["src_ip"] == "1.2.3.4"
     assert pr.fields["action"] == "allow"
+
+
+def test_windows_event_log_detection_and_parse():
+    raw = """<?xml version=\"1.0\"?>
+<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">
+  <System>
+    <Provider Name=\"Microsoft-Windows-Security-Auditing\"/>
+    <EventID>4625</EventID>
+    <Level>8</Level>
+    <TimeCreated SystemTime=\"2026-01-15T10:22:03Z\"/>
+    <Computer>DC01</Computer>
+  </System>
+  <EventData>
+    <Data Name=\"TargetUserName\">administrator</Data>
+    <Data Name=\"IpAddress\">203.0.113.5</Data>
+    <Data Name=\"LogonType\">3</Data>
+  </EventData>
+</Event>
+"""
+    parser = get_registry().get("windows_evtx")
+    det = parser.detect(raw, filename="Security.evtx")
+    assert det.format == "EVTX"
+    assert det.confidence >= 0.9
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["event_id"] == "4625"
+    assert pr.fields["provider_name"] == "Microsoft-Windows-Security-Auditing"
+    assert pr.fields["TargetUserName"] == "administrator"
 
 
 def test_unknown_format_low_confidence():

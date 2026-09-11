@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.models.evidence import RawEvidence
 from app.models.user import User
 from app.schemas.ingest import IngestJsonRequest, IngestResponse, BatchIngestResponse
+from app.parsers.windows_evtx import extract_windows_event_records
 from app.services.audit_service import record_audit
 from app.services.ingest_service import ingest_event
 
@@ -90,14 +91,35 @@ async def ingest_raw(
     if len(raw_bytes) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Upload exceeds MAX_UPLOAD_BYTES")
 
-    event = ingest_event(
-        db, raw_bytes=raw_bytes, source=source, source_type=source_type,
-        filename=filename, content_type=content_type,
-    )
-    record_audit(db, actor=user.email, action="INGEST_RAW", resource="event",
-                 resource_id=event.event_id)
+    payloads = [raw_bytes]
+    if filename.lower().endswith((".evtx", ".evt")):
+        payloads = extract_windows_event_records(raw_bytes)
+        if not payloads:
+            raise HTTPException(status_code=400, detail="Could not extract Windows event records from EVTX/EVT payload")
+
+    created_events = []
+    ingestion_id = str(uuid.uuid4())
+    for idx, payload in enumerate(payloads):
+        event = ingest_event(
+            db,
+            raw_bytes=payload.encode("utf-8") if isinstance(payload, str) else payload,
+            source=source,
+            source_type=source_type,
+            filename=filename,
+            content_type=content_type,
+            ingestion_id=ingestion_id,
+        )
+        created_events.append(event)
+        record_audit(db, actor=user.email, action="INGEST_RAW", resource="event",
+                     resource_id=event.event_id,
+                     new_state={"record_index": idx, "filename": filename})
+
     db.commit()
-    return _response(event, db)
+    return _response(created_events[0], db) if created_events else _response(
+        ingest_event(db, raw_bytes=raw_bytes, source=source, source_type=source_type,
+                     filename=filename, content_type=content_type, ingestion_id=ingestion_id),
+        db,
+    )
 
 
 @router.post("/batch", response_model=BatchIngestResponse)
@@ -117,17 +139,23 @@ async def ingest_batch(
     text = data.decode("utf-8", errors="replace")
     filename = file.filename or "batch.log"
 
-    # Split rules by extension
-    if filename.endswith(".jsonl"):
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-    elif filename.endswith(".csv"):
-        lines = text.splitlines()
-        if lines:
-            lines = [",".join(lines[0].split(","))] if False else lines  # CSV handled per-row below
+    if filename.lower().endswith((".evtx", ".evt")):
+        payloads = [item.encode("utf-8") for item in extract_windows_event_records(data)]
+        if not payloads:
+            raise HTTPException(status_code=400, detail="Could not extract Windows event records from EVTX/EVT payload")
+        lines = payloads
     else:
-        # Split on blank lines, but treat each non-empty line as its own event
-        # if the file is line-oriented log (default behavior).
-        lines = [ln for ln in text.splitlines() if ln.strip()]
+        # Split rules by extension
+        if filename.endswith(".jsonl"):
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+        elif filename.endswith(".csv"):
+            lines = text.splitlines()
+            if lines:
+                lines = [",".join(lines[0].split(","))] if False else lines  # CSV handled per-row below
+        else:
+            # Split on blank lines, but treat each non-empty line as its own event
+            # if the file is line-oriented log (default behavior).
+            lines = [ln for ln in text.splitlines() if ln.strip()]
 
     ingestion_id = str(uuid.uuid4())
     accepted = 0
@@ -135,13 +163,13 @@ async def ingest_batch(
     events_out: list[IngestResponse] = []
 
     for ln in lines[:10000]:  # bounded batch
-        raw_bytes = ln.encode("utf-8")
+        raw_bytes = ln if isinstance(ln, bytes) else ln.encode("utf-8")
         if not raw_bytes:
             continue
         try:
             ev = ingest_event(
                 db, raw_bytes=raw_bytes, source=source, source_type=source_type,
-                filename=filename, content_type="text/plain",
+                filename=filename, content_type="application/xml" if filename.lower().endswith((".evtx", ".evt")) else "text/plain",
                 ingestion_id=ingestion_id,
             )
             events_out.append(_response(ev, db))

@@ -10,6 +10,7 @@ from app.parsers.json_parser import JSONParser
 from app.parsers.jsonl import JSONLParser
 from app.parsers.xml_parser import XMLParser
 from app.parsers.csv_parser import CSVParser
+from app.parsers.windows_evtx import WindowsEventLogParser
 
 
 class ParserRegistry:
@@ -58,5 +59,6 @@ def get_registry() -> ParserRegistry:
         r.register(JSONLParser())
         r.register(XMLParser())
         r.register(CSVParser())
+        r.register(WindowsEventLogParser())
         _registry = r
     return _registry
