@@ -61,6 +61,23 @@ def test_json_detection_and_parse():
     assert pr.fields["user"] == "alice"
 
 
+def test_json_detection_and_parse_hjson_like_input():
+    raw = '''{
+      // comment
+      @timestamp: "2026-01-15T10:40:00Z",
+      user: "alice",
+      src_ip: "10.0.0.1",
+    }'''
+    parser = get_registry().get("json")
+    det = parser.detect(raw)
+    assert det.format == "JSON"
+    assert det.confidence >= 0.8
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["user"] == "alice"
+    assert pr.fields["src_ip"] == "10.0.0.1"
+
+
 def test_jsonl_detection():
     raw = '{"a":1}\n{"a":2}\n{"a":3}'
     parser = get_registry().get("jsonl")

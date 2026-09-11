@@ -20,3 +20,4 @@ email-validator==2.2.0
 slowapi==0.1.9
 structlog==24.4.0
 requests==2.32.3
+python-evtx==0.8.1

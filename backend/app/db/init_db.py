@@ -6,7 +6,8 @@ from sqlalchemy import select
 from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.core.config import settings
-from app.db.session import SessionLocal
+from app.db.base import Base
+from app.db.session import SessionLocal, engine
 from app.models.user import Role, User, user_roles
 from app.models.rule import DetectionRule
 from app.models.parser import ParserRegistry
@@ -126,6 +127,7 @@ def _ensure_parser_registry(db) -> None:
 def init_db() -> None:
     db = SessionLocal()
     try:
+        Base.metadata.create_all(bind=engine)
         roles = _ensure_roles(db)
         _ensure_user(db, settings.BOOTSTRAP_ADMIN_EMAIL, settings.BOOTSTRAP_ADMIN_PASSWORD, [roles["ADMIN"]])
         _ensure_user(db, settings.BOOTSTRAP_ANALYST_EMAIL, settings.BOOTSTRAP_ANALYST_PASSWORD, [roles["ANALYST"]])

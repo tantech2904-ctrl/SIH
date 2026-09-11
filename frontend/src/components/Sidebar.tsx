@@ -45,44 +45,48 @@ const NAV = [
 
 export function Sidebar() {
   return (
-    <aside className="w-60 shrink-0 border-r border-soc-border bg-soc-panel flex flex-col">
-      <div className="px-4 py-3 border-b border-soc-border">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded bg-gradient-to-br from-soc-accent to-soc-accentDim flex items-center justify-center text-white font-bold text-xs">
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-soc-border/80 bg-soc-panel/85 backdrop-blur-sm">
+      <div className="border-b border-soc-border px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-soc-accentSoft via-soc-accent to-soc-accentDim text-sm font-black text-soc-bg shadow-[0_12px_25px_rgba(52,211,153,0.22)]">
             U
           </div>
-          <div>
-            <div className="text-sm font-bold tracking-wide">ULPF</div>
-            <div className="text-2xs text-soc-textDim">SIH 2026 · PS 26156</div>
+          <div className="min-w-0">
+            <div className="text-sm font-bold tracking-[0.22em] text-soc-text">ULPF</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-soc-textDim">SecOps Suite</div>
           </div>
         </div>
       </div>
-      <nav className="flex-1 overflow-y-auto py-3">
+
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
         {NAV.map((group) => (
-          <div key={group.section} className="mb-3">
-            <div className="px-4 mb-1 text-2xs uppercase tracking-widest text-soc-textDim">
+          <div key={group.section} className="mb-4">
+            <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-[0.24em] text-soc-textDim">
               {group.section}
             </div>
-            {group.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-2 px-4 py-1.5 text-sm border-l-2 ${
-                    isActive
-                      ? "border-soc-accent bg-soc-panelAlt text-soc-text"
-                      : "border-transparent text-soc-textMuted hover:text-soc-text hover:bg-soc-panelAlt/60"
-                  }`
-                }
-              >
-                <item.icon className="w-4 h-4 shrink-0" />
-                <span className="truncate">{item.label}</span>
-              </NavLink>
-            ))}
+            <div className="space-y-1">
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-all duration-200 ${
+                      isActive
+                        ? "border-soc-accent/80 bg-soc-accent/10 text-soc-text shadow-[inset_0_0_0_1px_rgba(52,211,153,0.1)]"
+                        : "border-transparent text-soc-textMuted hover:border-soc-border hover:bg-soc-panelAlt/70 hover:text-soc-text"
+                    }`
+                  }
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
           </div>
         ))}
       </nav>
-      <div className="px-4 py-2 border-t border-soc-border text-2xs text-soc-textDim">
+
+      <div className="border-t border-soc-border px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-soc-textDim">
         v0.1.0 · Team The Beetles
       </div>
     </aside>

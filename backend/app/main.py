@@ -17,6 +17,7 @@ from app.core.errors import (
 )
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter
+from app.db.init_db import init_db
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -35,6 +36,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    init_db()
     log.info("app.startup", env=settings.APP_ENV, version=settings.APP_VERSION)
     yield
     log.info("app.shutdown")

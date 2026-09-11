@@ -210,6 +210,15 @@ export const api = {
   // Parsers
   listParsers: () => request<{ items: ParserItem[] }>("/parsers"),
   getParser: (id: string) => request<ParserItem & { loaded: boolean }>(`/parsers/${id}`),
+  createParser: (body: {
+    parser_id: string;
+    name?: string;
+    vendor?: string;
+    format?: string;
+    version?: string;
+    enabled?: boolean;
+    metadata?: Record<string, any>;
+  }) => request<any>("/parsers", { method: "POST", body: JSON.stringify(body) }),
   enableParser: (id: string) =>
     request<{ enabled: boolean }>(`/parsers/${id}/enable`, { method: "POST" }),
   disableParser: (id: string) =>
