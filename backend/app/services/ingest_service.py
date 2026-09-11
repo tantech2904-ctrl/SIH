@@ -48,6 +48,11 @@ def _stage_end(run: ProcessingRun, status: str = "OK", error: str | None = None)
     run.error = error[:1024] if error else None
 
 
+def _enabled_parser_ids(db: Session) -> set[str]:
+    rows = db.query(ParserRegistry).filter(ParserRegistry.enabled.is_(True)).all()
+    return {row.parser_id for row in rows}
+
+
 def ingest_event(
     db: Session,
     *,
@@ -100,7 +105,8 @@ def ingest_event(
     raw_text = raw_bytes.decode("utf-8", errors="replace")
     run = _stage_start(db, event.event_id, "DETECTED", component="detector")
     try:
-        detection = detect_format(raw_text, filename=filename)
+        enabled_parser_ids = _enabled_parser_ids(db)
+        detection = detect_format(raw_text, filename=filename, enabled_parser_ids=enabled_parser_ids)
         event.detected_format = detection.format
         event.detection_confidence = detection.confidence
         event.parser_id = detection.parser_id or None
@@ -155,7 +161,8 @@ def process_existing_event(db: Session, *, event: Event, force_parser: str | Non
         event.detection_confidence = 1.0
         event.parser_id = parser.parser_id
     else:
-        detection = detect_format(raw_text, filename=event.filename)
+        enabled_parser_ids = _enabled_parser_ids(db)
+        detection = detect_format(raw_text, filename=event.filename, enabled_parser_ids=enabled_parser_ids)
         event.detected_format = detection.format
         event.detection_confidence = detection.confidence
         event.parser_id = detection.parser_id or None

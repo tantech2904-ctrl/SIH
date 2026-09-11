@@ -28,6 +28,8 @@ export interface EventListItem {
   product: string | null;
   message: string | null;
   risk_score: number | null;
+  threat_malicious?: boolean | null;
+  threat_context?: Record<string, any> | null;
   processing_status: string;
   detected_format: string | null;
   parser_id: string | null;

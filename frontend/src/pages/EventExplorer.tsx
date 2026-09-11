@@ -125,6 +125,7 @@ export default function EventExplorer() {
                   <th>User</th>
                   <th>Vendor</th>
                   <th>Format</th>
+                  <th>Threat</th>
                   <th>Message</th>
                   <th>Risk</th>
                   <th>Status</th>
@@ -145,6 +146,15 @@ export default function EventExplorer() {
                     <td>{e.user_name || "—"}</td>
                     <td>{e.vendor || "—"}</td>
                     <td className="text-soc-textMuted">{e.detected_format || "—"}</td>
+                    <td>
+                      {e.threat_malicious ? (
+                        <span className="badge border text-red-400 bg-red-500/10 border-red-500/40">
+                          Threat
+                        </span>
+                      ) : (
+                        <span className="text-soc-textDim">—</span>
+                      )}
+                    </td>
                     <td className="text-soc-textMuted max-w-[320px]">
                       {truncate(e.message, 100)}
                     </td>

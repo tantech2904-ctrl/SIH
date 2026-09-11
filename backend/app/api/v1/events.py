@@ -45,7 +45,7 @@ def list_events(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
-    query = db.query(CanonicalEvent).join(Event, Event.event_id == CanonicalEvent.event_id)
+    query = db.query(Event, CanonicalEvent).outerjoin(CanonicalEvent, Event.event_id == CanonicalEvent.event_id)
 
     if severity:
         query = query.filter(CanonicalEvent.severity == severity.upper())
@@ -68,6 +68,9 @@ def list_events(
     if q:
         like = f"%{q}%"
         query = query.filter(or_(
+            Event.source.ilike(like),
+            Event.filename.ilike(like),
+            Event.processing_status.ilike(like),
             CanonicalEvent.message.ilike(like),
             CanonicalEvent.user_name.ilike(like),
             CanonicalEvent.source_ip.ilike(like),
@@ -76,29 +79,30 @@ def list_events(
         ))
 
     total = query.count()
-    rows = query.order_by(desc(CanonicalEvent.timestamp)).offset((page - 1) * size).limit(size).all()
-    ev_ids = [r.event_id for r in rows]
-    events = {e.event_id: e for e in db.query(Event).filter(Event.event_id.in_(ev_ids)).all()} if ev_ids else {}
+    rows = query.order_by(desc(Event.ingested_at)).offset((page - 1) * size).limit(size).all()
 
     items = []
-    for r in rows:
-        e = events.get(r.event_id)
+    for e, c in rows:
+        timestamp = (c.timestamp if c else e.ingested_at)
+        threat_context = c.threat_context if c else None
         items.append(EventListItem(
-            event_id=r.event_id,
-            timestamp=r.timestamp.isoformat(),
-            event_type=r.event_type,
-            category=r.category,
-            severity=r.severity,
-            source_ip=r.source_ip,
-            destination_ip=r.destination_ip,
-            user_name=r.user_name,
-            vendor=r.vendor,
-            product=r.product,
-            message=(r.message or "")[:300],
-            risk_score=r.risk_score,
-            processing_status=e.processing_status if e else "UNKNOWN",
-            detected_format=e.detected_format if e else None,
-            parser_id=e.parser_id if e else None,
+            event_id=e.event_id,
+            timestamp=timestamp.isoformat(),
+            event_type=(c.event_type if c else "unknown") or "unknown",
+            category=(c.category if c else "unknown") or "unknown",
+            severity=(c.severity if c else e.severity) or "INFO",
+            source_ip=c.source_ip if c else None,
+            destination_ip=c.destination_ip if c else None,
+            user_name=c.user_name if c else None,
+            vendor=c.vendor if c else None,
+            product=c.product if c else None,
+            message=(c.message if c else None) or (e.error_message or "")[:300],
+            risk_score=c.risk_score if c else e.risk_score,
+            threat_malicious=bool(threat_context.get("malicious", False)) if threat_context else False,
+            threat_context=threat_context,
+            processing_status=e.processing_status,
+            detected_format=e.detected_format,
+            parser_id=e.parser_id,
         ))
     pages = (total + size - 1) // size if size else 0
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}

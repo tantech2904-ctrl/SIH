@@ -15,6 +15,8 @@ class EventListItem(BaseModel):
     product: Optional[str] = None
     message: Optional[str] = None
     risk_score: Optional[int] = None
+    threat_malicious: Optional[bool] = None
+    threat_context: Optional[dict[str, Any]] = None
     processing_status: str
     detected_format: Optional[str] = None
     parser_id: Optional[str] = None

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { ChevronRight, RefreshCw, Check, X } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useQuarantine } from "@/hooks/useApi";
@@ -12,7 +12,20 @@ export default function Quarantine() {
   const [reason, setReason] = useState("");
   const params = { status: status || undefined, reason: reason || undefined, size: 100, page: 1 };
   const { data, isLoading, error } = useQuarantine(params);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(searchParams.get("sel") || null);
+
+  useEffect(() => {
+    const sel = searchParams.get("sel");
+    setSelected(sel || null);
+  }, [searchParams]);
+
+  function handleClose() {
+    setSelected(null);
+    const next = new URLSearchParams(searchParams);
+    next.delete("sel");
+    setSearchParams(next, { replace: true });
+  }
 
   return (
     <div className="p-4 space-y-3">
@@ -75,7 +88,7 @@ export default function Quarantine() {
           {!selected ? (
             <EmptyState message="Select a quarantine entry" />
           ) : (
-            <QuarantineDetail id={selected} onClose={() => setSelected(null)} />
+            <QuarantineDetail id={selected} onClose={handleClose} />
           )}
         </div>
       </div>

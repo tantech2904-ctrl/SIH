@@ -100,6 +100,16 @@ function OverviewTab({ event }: { event: any }) {
       <Row label="Processing Status" value={event.processing_status} />
       <Row label="Severity" value={event.severity || "—"} />
       <Row label="Risk Score" value={String(event.risk_score ?? "—")} />
+      <Row
+        label="Threat Context"
+        value={
+          event.canonical?.threat_context?.malicious
+            ? "Malicious indicators detected"
+            : event.canonical?.threat_context && Object.keys(event.canonical.threat_context).length
+              ? "Context present"
+              : "—"
+        }
+      />
       {event.error_message ? <Row label="Error" value={event.error_message} /> : null}
     </div>
   );
@@ -417,6 +427,17 @@ function ReportTab({ id }: { id: string }) {
     } catch (e) { setErr(e); }
     finally { setLoading(false); }
   }
+  async function downloadJson() {
+    if (!report) return;
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ulpf-report-${id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -427,9 +448,23 @@ function ReportTab({ id }: { id: string }) {
       </div>
       {err ? <ErrorBox error={err} /> : null}
       {report ? (
-        <pre className="text-2xs font-mono bg-soc-bg p-2 rounded overflow-auto max-h-[480px]">
-          {JSON.stringify(report, null, 2)}
-        </pre>
+        <>
+          <div className="panel p-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-soc-textDim">Report UUID</div>
+                <div className="font-mono text-soc-accent">{report.event?.event_id || id}</div>
+              </div>
+              <button className="btn text-2xs" onClick={downloadJson}>Download JSON</button>
+            </div>
+            <div className="text-2xs text-soc-textDim mt-1">
+              Generated {report.generated_at ? formatTime(report.generated_at) : "—"}
+            </div>
+          </div>
+          <pre className="text-2xs font-mono bg-soc-bg p-2 rounded overflow-auto max-h-[480px]">
+            {JSON.stringify(report, null, 2)}
+          </pre>
+        </>
       ) : null}
     </div>
   );

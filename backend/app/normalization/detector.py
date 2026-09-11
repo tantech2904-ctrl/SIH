@@ -26,7 +26,12 @@ class FormatDetection:
         }
 
 
-def detect_format(raw: str, *, filename: str | None = None) -> FormatDetection:
+def detect_format(
+    raw: str,
+    *,
+    filename: str | None = None,
+    enabled_parser_ids: set[str] | None = None,
+) -> FormatDetection:
     registry = get_registry()
     best_parser = None
     best_conf = 0.0
@@ -34,6 +39,8 @@ def detect_format(raw: str, *, filename: str | None = None) -> FormatDetection:
     best_format = "UNKNOWN"
 
     for parser in registry.all():
+        if enabled_parser_ids is not None and parser.parser_id not in enabled_parser_ids:
+            continue
         try:
             res = parser.detect(raw, filename=filename)
         except Exception:
