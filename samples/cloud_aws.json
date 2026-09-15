@@ -1,0 +1,25 @@
+{
+  "eventVersion": "1.08",
+  "eventTime": "2026-01-15T11:10:00Z",
+  "eventSource": "signin.amazonaws.com",
+  "eventName": "ConsoleLogin",
+  "awsRegion": "us-east-1",
+  "sourceIPAddress": "203.0.113.11",
+  "userAgent": "Mozilla/5.0",
+  "userIdentity": {
+    "type": "IAMUser",
+    "userName": "svc-ops"
+  },
+  "responseElements": {
+    "ConsoleLogin": "Failure"
+  },
+  "additionalEventData": {
+    "MFAUsed": "No"
+  },
+  "eventType": "AwsConsoleSignIn",
+  "severity": "MEDIUM",
+  "vendor": "AWS",
+  "product": "CloudTrail",
+  "status": "failure",
+  "message": "AWS console login failed for svc-ops"
+}
