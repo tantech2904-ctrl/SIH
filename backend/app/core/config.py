@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024
     MAX_EVENT_BYTES: int = 1 * 1024 * 1024
 
+    # Syslog UDP ingestion (optional, default off)
+    SYSLOG_UDP_ENABLED: bool = False
+    SYSLOG_UDP_HOST: str = "0.0.0.0"
+    SYSLOG_UDP_PORT: int = 5140
+    
     # Rate limits
     RATE_LIMIT_AUTH: str = "10/minute"
     RATE_LIMIT_INGEST: str = "600/minute"
@@ -90,6 +95,7 @@ class Settings(BaseSettings):
     BOOTSTRAP_ANALYST_PASSWORD: str = "ChangeMe_Analyst123!"
     BOOTSTRAP_AUDITOR_EMAIL: str = "auditor@ulpf.local"
     BOOTSTRAP_AUDITOR_PASSWORD: str = "ChangeMe_Auditor123!"
+
 
     @field_validator("JWT_SECRET")
     @classmethod

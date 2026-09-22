@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import LiveStream from "@/pages/LiveStream";
 import EventExplorer from "@/pages/EventExplorer";
@@ -30,10 +31,16 @@ import Settings from "@/pages/Settings";
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/login" element={<Login />} />
 
-      <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+      <Route
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/live" element={<LiveStream />} />
         <Route path="/events" element={<EventExplorer />} />

@@ -6,6 +6,8 @@ from app.api.deps import require_roles
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.models.user import User
+from app.schemas.audit import AuditVerifyResponse
+from app.services.audit_service import verify_audit_chain
 
 router = APIRouter()
 
@@ -38,5 +40,18 @@ def list_audit(
             "correlation_id": r.correlation_id,
             "previous_state": r.previous_state, "new_state": r.new_state,
             "integrity_hash": r.integrity_hash, "prev_hash": r.prev_hash,
+            "is_genesis": r.is_genesis,
         } for r in rows],
     }
+
+
+@router.get("/verify", response_model=AuditVerifyResponse)
+def verify_chain(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    """Walk the entire audit hash chain and report integrity.
+
+    Role-gated identically to the audit list endpoint.
+    """
+    return verify_audit_chain(db)

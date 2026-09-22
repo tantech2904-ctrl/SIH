@@ -222,6 +222,7 @@ export interface AuditItem {
   new_state: any;
   integrity_hash: string;
   prev_hash: string;
+  is_genesis: boolean;
 }
 
 export interface IntegrityResult {
@@ -244,4 +245,16 @@ export interface ReplayResult {
   new_status: string;
   result: string;
   error?: string | null;
+}
+
+export interface AuditVerifyResult {
+  valid: boolean;
+  checked: number;
+  chain_length: number;
+  first_broken_at: string | null;
+  broken_audit_id: string | null;
+  reason: string | null;
+  subreason: string | null;
+  detail: string | null;
+  verified_at: string;
 }

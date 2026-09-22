@@ -1,20 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { ShieldCheck, Loader2 } from "lucide-react";
 
 export default function Login() {
-  const { login, loading } = useAuth();
+  const { login, loading, user } = useAuth();
   const nav = useNavigate();
   const [email, setEmail] = useState("admin@ulpf.local");
   const [password, setPassword] = useState("ChangeMe_Admin123!");
   const [err, setErr] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (user) nav("/dashboard", { replace: true });
+  }, [user, nav]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     const ok = await login(email, password);
-    if (ok) nav("/dashboard");
+    if (ok) nav("/dashboard", { replace: true });
     else setErr("Invalid credentials");
   }
 

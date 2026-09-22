@@ -11,6 +11,7 @@ from app.db.session import SessionLocal, engine
 from app.models.user import Role, User, user_roles
 from app.models.rule import DetectionRule
 from app.models.parser import ParserRegistry
+from app.services.audit_service import ensure_genesis
 
 log = get_logger(__name__)
 
@@ -134,6 +135,7 @@ def init_db() -> None:
         _ensure_user(db, settings.BOOTSTRAP_AUDITOR_EMAIL, settings.BOOTSTRAP_AUDITOR_PASSWORD, [roles["AUDITOR"]])
         _ensure_rules(db)
         _ensure_parser_registry(db)
+        ensure_genesis(db)          
         db.commit()
         log.info("db.init.complete")
     except Exception as e:
@@ -142,6 +144,7 @@ def init_db() -> None:
         raise
     finally:
         db.close()
+
 
 
 if __name__ == "__main__":

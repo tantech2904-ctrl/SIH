@@ -1,6 +1,7 @@
 import type {
   AlertItem,
   AuditItem,
+  AuditVerifyResult,
   DashboardData,
   DriftItem,
   EventDetail,
@@ -250,6 +251,7 @@ export const api = {
     });
     return request<Page<AuditItem>>(`/audit?${qs.toString()}`);
   },
+  verifyAuditChain: () => request<AuditVerifyResult>("/audit/verify"),
 
   // Alerts / Incidents
   listAlerts: (params: Record<string, string | number | undefined> = {}) => {

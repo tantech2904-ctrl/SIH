@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, JSON, Index
+from sqlalchemy import String, DateTime, JSON, Index, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -27,3 +27,6 @@ class AuditLog(Base):
     correlation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     integrity_hash: Mapped[str] = mapped_column(String(64), default="")
     prev_hash: Mapped[str] = mapped_column(String(64), default="")
+    # Genesis anchor: exactly one row should carry this flag; inserted by
+    # init_db(). Verification treats it as the chain root.
+    is_genesis: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)

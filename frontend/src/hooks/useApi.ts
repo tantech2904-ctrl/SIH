@@ -93,6 +93,12 @@ export function useAudit(params: Record<string, any>) {
   return useQuery({ queryKey: ["audit", params], queryFn: () => api.listAudit(params) });
 }
 
+export function useAuditVerify() {
+  return useMutation({
+    mutationFn: () => api.verifyAuditChain(),
+  });
+}
+
 export function useDrift() {
   return useQuery({ queryKey: ["drift"], queryFn: () => api.listDrift() });
 }

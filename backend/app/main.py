@@ -38,8 +38,34 @@ async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
     log.info("app.startup", env=settings.APP_ENV, version=settings.APP_VERSION)
-    yield
-    log.info("app.shutdown")
+
+    # Optional Syslog UDP listener (asyncio task; off unless enabled).
+    syslog_listener = None
+    if settings.SYSLOG_UDP_ENABLED:
+        # Imported lazily so a missing optional dependency cannot break boot.
+        from app.syslog.udp_listener import SyslogUdpListener
+
+        syslog_listener = SyslogUdpListener(
+            host=settings.SYSLOG_UDP_HOST,
+            port=settings.SYSLOG_UDP_PORT,
+        )
+        try:
+            await syslog_listener.start()
+        except OSError as e:
+            log.error(
+                "syslog.udp.bind_failed",
+                host=settings.SYSLOG_UDP_HOST,
+                port=settings.SYSLOG_UDP_PORT,
+                error=str(e),
+            )
+            syslog_listener = None
+
+    try:
+        yield
+    finally:
+        if syslog_listener is not None:
+            await syslog_listener.stop()
+        log.info("app.shutdown")
 
 
 app = FastAPI(
