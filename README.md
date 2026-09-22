@@ -44,35 +44,59 @@ Once the services are running, access them via your browser:
 
 ## 🛠 Manual Local Setup
 
-If you prefer not to use Docker, you will need **Python 3.11+** and **Node.js + npm**. Run the backend and frontend in separate terminal windows.
+If you prefer not to use Docker, install **Python 3.11+**, **Node.js 18+**, and **npm**. The local backend uses SQLite by default, so Postgres, Redis, and MinIO are not required for the basic API and frontend workflow. Run the backend and frontend in separate PowerShell windows.
 
-### Terminal 1: Backend
+### Terminal 1: Backend (PowerShell)
 
-```bash
-cd ULPF/backend
+Run these commands from the repository root:
 
-# Create and activate virtual environment
+```powershell
+Set-Location E:\SIH\SIH\backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies and run the server
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### Terminal 2: Frontend
+The virtual environment does not need to be activated when its Python executable is called directly. If you prefer to activate it, run `.\venv\Scripts\Activate.ps1` first and then use `python` for the remaining commands. If PowerShell blocks activation, continue using the direct executable commands above.
 
-```bash
-cd ULPF/frontend
+### Terminal 2: Frontend (PowerShell)
 
-# Install dependencies and start the dev server
-npm install
-npm run build
-npm run dev
+Run these commands from the repository root in a second terminal:
 
+```powershell
+Set-Location E:\SIH\SIH\frontend
+npm.cmd ci
+npm.cmd run build
+npm.cmd run dev
 ```
+
+`npm.cmd` is used because PowerShell may block the `npm.ps1` wrapper when script execution is restricted. The Vite development server proxies `/api` requests to the backend at `http://localhost:8000`.
+
+### Verify the local setup
+
+Open these URLs after both terminals are running:
+
+| Service | URL |
+| --- | --- |
+| **Frontend** | http://localhost:5173 |
+| **Backend** | http://localhost:8000 |
+| **API Health Check** | http://localhost:8000/api/v1/health |
+| **Swagger API Docs** | http://localhost:8000/docs |
+
+To stop either service, press `Ctrl+C` in its terminal. The SQLite database is created automatically in `backend/ulpf.db` on first backend startup.
+
+### Optional: run with Docker services locally
+
+If you need Postgres, Redis, or MinIO for features that depend on them, start the infrastructure services from the repository root:
+
+```powershell
+Set-Location E:\SIH\SIH
+Copy-Item .env.example .env
+docker compose up -d postgres redis minio
+```
+
+The Docker Compose backend uses its own container-specific connection settings. For the manual backend, keep the default SQLite configuration unless you intentionally configure local connection URLs.
 
 ---
 
@@ -108,5 +132,3 @@ docker compose build --no-cache
 docker compose up
 
 ```
-
-
