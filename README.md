@@ -108,3 +108,46 @@ docker compose build --no-cache
 docker compose up
 
 ```
+
+Project Structure
+
+The important directories are:
+
+ULPF/
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/             # API routes/endpoints
+│   │   ├── core/            # Configuration and core utilities
+│   │   ├── models/          # Database models
+│   │   ├── schemas/         # Pydantic/API schemas
+│   │   ├── services/        # Application/business services
+│   │   ├── parsers/         # Log format parsers
+│   │   ├── detection/       # Format detection
+│   │   ├── normalization/   # CSE normalization
+│   │   ├── enrichment/      # Security enrichment
+│   │   ├── validation/      # Event validation
+│   │   ├── quarantine/      # Failed/invalid event handling
+│   │   ├── replay/          # Event replay functionality
+│   │   ├── audit/           # Audit logging
+│   │   └── main.py          # FastAPI application entry point
+│   │
+│   ├── tests/               # Backend/API tests
+│   ├── requirements.txt     # Python dependencies
+│   └── venv/                # Local Python virtual environment
+│
+├── frontend/
+│   ├── src/                 # React application source
+│   ├── public/              # Static frontend assets
+│   ├── package.json         # Node dependencies/scripts
+│   └── ...
+│
+├── samples/                 # Sample security logs
+├── scripts/                 # Utility/automation scripts
+├── docs/                    # Project documentation
+│
+├── docker-compose.yml       # Docker service configuration
+├── .env.example             # Example environment configuration
+├── .gitignore
+└── README.md
+
