@@ -57,7 +57,7 @@ export default function Landing() {
         </div>
       </section>
       <footer className="border-t border-soc-border px-8 py-4 text-2xs text-soc-textDim flex justify-between">
-        <span>Team The Beetles · Universal Log Pre-Processing Framework</span>
+        <span>Team - BEETLES · Universal Log Pre-Processing Framework</span>
         <span>Defensive cybersecurity platform — no offensive tooling</span>
       </footer>
     </div>

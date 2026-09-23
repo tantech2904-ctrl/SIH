@@ -87,7 +87,7 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-soc-border px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-soc-textDim">
-        v0.1.0 · Team The Beetles
+        v0.1.0 · Team - BEETLES
       </div>
     </aside>
   );
