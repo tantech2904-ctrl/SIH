@@ -132,7 +132,7 @@ if not exist ".env" (
 
 echo.
 echo          Installing backend dependencies...
-venv\Scripts\python.exe -m pip install -r requirements.txt
+venv\Scripts\python.exe -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r requirements.txt
 
 if errorlevel 1 (
     color 0C
