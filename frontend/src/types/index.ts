@@ -258,3 +258,39 @@ export interface AuditVerifyResult {
   detail: string | null;
   verified_at: string;
 }
+
+export interface SettingsItem {
+  key: string;
+  label: string;
+  type: "string" | "bool" | "int" | "float" | "csv";
+  sensitive: boolean;
+  requires_restart: boolean;
+  description: string;
+  value: string;
+  is_set: boolean;
+}
+
+export interface SettingsGroup {
+  name: string;
+  items: SettingsItem[];
+}
+
+export interface SettingsListResponse {
+  groups: SettingsGroup[];
+  env_file: string;
+  masked_sentinel: string;
+}
+
+export interface SettingsUpdateResponse {
+  updated: string[];
+  rejected: { key: string; reason: string }[];
+  requires_restart: string[];
+  restart_required: boolean;
+  audit_id?: string | null;
+}
+
+export interface RestartResponse {
+  restarted: boolean;
+  mode: string;
+  message: string;
+}

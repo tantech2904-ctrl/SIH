@@ -388,3 +388,27 @@ def _safe_json(obj) -> dict:
         return json.loads(json.dumps(obj, default=str))
     except Exception:
         return {}
+
+def dispatch_enrichment_async(event_ids: list[str]) -> None:
+    """Best-effort dispatch of the enrichment Celery task after ingestion commits.
+
+    HARD INVARIANT: this MUST be called AFTER db.commit(), never before.
+    The worker queries CanonicalEvent by event_id; if the transaction has
+    not committed, the row is invisible and the task returns NOT_FOUND.
+
+    Never raises. Enrichment is optional context; ingestion must succeed
+    even if Redis/Celery is unreachable. Dispatch failures are logged and
+    swallowed.
+    """
+    if not event_ids:
+        return
+    try:
+        from app.workers.tasks import enrich_event_task
+        for eid in event_ids:
+            enrich_event_task.delay(eid)
+    except Exception as e:
+        log.warning(
+            "enrich.dispatch_failed",
+            count=len(event_ids),
+            error=str(e)[:200],
+        )

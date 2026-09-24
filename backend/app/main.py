@@ -42,7 +42,6 @@ async def lifespan(app: FastAPI):
     # Optional Syslog UDP listener (asyncio task; off unless enabled).
     syslog_listener = None
     if settings.SYSLOG_UDP_ENABLED:
-        # Imported lazily so a missing optional dependency cannot break boot.
         from app.syslog.udp_listener import SyslogUdpListener
 
         syslog_listener = SyslogUdpListener(
@@ -60,11 +59,29 @@ async def lifespan(app: FastAPI):
             )
             syslog_listener = None
 
+    # Optional file tail ingestor (asyncio task; off unless enabled).
+    file_tailer = None
+    if settings.LOG_TAIL_ENABLED and settings.log_tail_paths_list:
+        from app.tailing.file_tailer import FileTailer
+
+        file_tailer = FileTailer(
+            paths=settings.log_tail_paths_list,
+            poll_seconds=settings.LOG_TAIL_POLL_SECONDS,
+            from_start=settings.LOG_TAIL_FROM_START,
+        )
+        try:
+            await file_tailer.start()
+        except Exception as e:
+            log.error("file_tail.start_failed", error=str(e))
+            file_tailer = None
+
     try:
         yield
     finally:
         if syslog_listener is not None:
             await syslog_listener.stop()
+        if file_tailer is not None:
+            await file_tailer.stop()
         log.info("app.shutdown")
 
 

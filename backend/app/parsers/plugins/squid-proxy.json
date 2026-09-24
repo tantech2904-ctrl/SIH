@@ -1,0 +1,20 @@
+{
+  "name": "squid-proxy",
+  "vendor": "Squid",
+  "product": "Squid",
+  "format": "Squid",
+  "version": "1.0.0",
+  "description": "Squid access.log native format.",
+  "match_criteria": {
+    "regex": "^\\d{10,}\\.\\d{3}\\s+\\d+\\s+\\S+\\s+(?:TCP|UDP)_\\w+/\\d+"
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": "^(?P<ts>\\d{10,}\\.\\d{3})\\s+(?P<duration>\\d+)\\s+(?P<src>\\S+)\\s+(?P<status>TCP_[A-Z]+|UDP_[A-Z]+)/(?P<status_code>\\d+)\\s+(?P<bytes>\\d+)\\s+(?P<method>\\S+)\\s+(?P<url>\\S+)\\s+(?P<suser>\\S+)\\s+(?P<peer>\\S+)/(?P<peer_status>\\S+)"
+  },
+  "field_mappings": {
+    "src": "source.ip", "suser": "user.name",
+    "url": "extensions.url", "method": "action",
+    "status_code": "status", "ts": "timestamp"
+  }
+}

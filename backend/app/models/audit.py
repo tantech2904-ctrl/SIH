@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, JSON, Index, Boolean
+from sqlalchemy import String, DateTime, JSON, Index, Boolean, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -12,9 +12,17 @@ def _now() -> datetime:
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-    __table_args__ = (Index("ix_audit_actor_ts", "actor", "timestamp"),)
+    __table_args__ = (
+        Index("ix_audit_actor_ts", "actor", "timestamp"),
+        Index("ix_audit_logs_seq", "seq", unique=True),
+    )
 
-    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Monotonic chain sequence. Assigned at INSERT time via SQLAlchemy's
+    # autoincrement; not settable by application code. This is the
+    # authoritative chain order — timestamps are informational only.
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    audit_id: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     actor: Mapped[str] = mapped_column(String(255), default="system")
     action: Mapped[str] = mapped_column(String(64), index=True)

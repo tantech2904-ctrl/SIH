@@ -1,0 +1,22 @@
+{
+  "name": "fortigate",
+  "vendor": "Fortinet",
+  "product": "FortiGate",
+  "format": "FortiGate",
+  "version": "1.0.0",
+  "description": "FortiGate key=value traffic/UTM log.",
+  "match_criteria": {
+    "contains": ["devname=", "devid="],
+    "regex": "\\btype=traffic\\b|\\bsubtype="
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": ".*?\\bdevname=(?P<device>\\S+).*?\\bsrcip=(?P<src>\\S+).*?\\bdstip=(?P<dst>\\S+).*?\\bsrcport=(?P<sport>\\d+).*?\\bdstport=(?P<dport>\\d+).*?\\bproto=(?P<proto>\\d+).*?\\baction=(?P<action>\\S+).*?\\buser=(?P<suser>\\S+)"
+  },
+  "field_mappings": {
+    "src": "source.ip", "dst": "destination.ip",
+    "sport": "source.port", "dport": "destination.port",
+    "action": "action", "suser": "user.name",
+    "device": "device"
+  }
+}

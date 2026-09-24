@@ -155,3 +155,115 @@ def test_best_match_prefers_specific_parser():
     parser, det = get_registry().best_match(raw)
     assert det.format == "CEF"
     assert parser.parser_id == "cef"
+
+# ---------------------------------------------------------------------------
+# Gap 3.10.5 — vendor plugin parser tests
+# ---------------------------------------------------------------------------
+
+def test_checkpoint_fw_plugin_parses_sample():
+    raw = ("<134>1 2026-01-15T10:22:03Z gw CheckPoint 1234 - "
+           "action=drop src=203.0.113.5 dst=10.0.0.8 s_port=51422 service=443 proto=tcp user=alice")
+    parser = get_registry().get("checkpoint-fw")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.4
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "203.0.113.5"
+    assert pr.fields["dst"] == "10.0.0.8"
+    assert pr.fields["action"] == "drop"
+
+
+def test_cisco_asa_plugin_parses_sample():
+    raw = ("<166>Jan 15 10:22:03 asa %ASA-6-302013: Built inbound TCP connection 12345 "
+           "for inside:10.0.0.5/51422 (10.0.0.5/51422) to outside:203.0.113.20/443 (203.0.113.20/443)")
+    parser = get_registry().get("cisco-asa")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "10.0.0.5"
+    assert pr.fields["dst"] == "203.0.113.20"
+    assert pr.fields["dport"] == "443"
+
+
+def test_fortigate_plugin_parses_sample():
+    raw = ("date=2026-01-15 time=10:22:03 devname=FGT-01 devid=FGT60E type=traffic subtype=forward "
+           "srcip=10.0.0.5 dstip=203.0.113.20 srcport=51422 dstport=443 proto=6 action=accept user=alice")
+    parser = get_registry().get("fortigate")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "10.0.0.5"
+    assert pr.fields["dst"] == "203.0.113.20"
+    assert pr.fields["action"] == "accept"
+
+
+def test_generic_syslog_plugin_parses_sample():
+    raw = "<134>Jan 15 10:22:03 host01 sshd[1234]: Failed password for admin from 203.0.113.5 port 51422 ssh2"
+    parser = get_registry().get("generic-syslog")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["device"] == "host01"
+    assert "Failed password" in pr.fields["msg"]
+
+
+def test_openvpn_plugin_parses_sample():
+    raw = ("2026-01-15 10:22:03 OpenVPN 2.6.0 203.0.113.5:51422 [alice] "
+           "Peer Connection Initiated with [AF_INET]203.0.113.5:51422")
+    parser = get_registry().get("openvpn")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "203.0.113.5"
+    assert pr.fields["suser"] == "alice"
+
+
+def test_paloalto_plugin_parses_sample():
+    raw = ("TRAFFIC,start,2026/01/15 10:22:03,203.0.113.5,10.0.0.8,51422,443,tcp,allow,"
+           "1234,5678,eth1,eth2,receives,forward,firewall")
+    parser = get_registry().get("paloalto")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "203.0.113.5"
+    assert pr.fields["dst"] == "10.0.0.8"
+    assert pr.fields["action"] == "allow"
+
+
+def test_snort_ids_plugin_parses_sample():
+    raw = ("[**] [1:1000001:0] ET SCAN Potential SSH Scan [**] [Priority: 3] {TCP} "
+           "203.0.113.5:51422 -> 10.0.0.8:22")
+    parser = get_registry().get("snort-ids")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "203.0.113.5"
+    assert pr.fields["dst"] == "10.0.0.8"
+    assert pr.fields["dport"] == "22"
+
+
+def test_squid_proxy_plugin_parses_sample():
+    raw = ("1736936523.123    250 10.0.0.5 TCP_MISS/200 4096 GET http://example.com/ "
+           "alice HIER_DIRECT/93.184.216.34 text/html")
+    parser = get_registry().get("squid-proxy")
+    assert parser is not None
+    det = parser.detect(raw)
+    assert det.confidence >= 0.5
+    pr = parser.parse(raw)
+    assert pr.success
+    assert pr.fields["src"] == "10.0.0.5"
+    assert pr.fields["suser"] == "alice"
+    assert pr.fields["url"] == "http://example.com/"

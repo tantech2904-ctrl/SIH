@@ -24,7 +24,7 @@ class XMLParser(BaseParser):
         if s.startswith("<?xml"):
             reasons.append("XML declaration present")
             conf += 0.6
-        if re.match(r"^<[A-Za-z_][\w:.-]*[\s>]", s):
+        if re.match(r"^<[A-Za-z_?][\w:.-]*[\s>?]", s):
             reasons.append("Root element opening tag detected")
             conf += 0.3
         if s.startswith("<"):

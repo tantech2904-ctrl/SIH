@@ -11,15 +11,30 @@ export default function LiveStream() {
   const [events, setEvents] = useState<EventListItem[]>([]);
   const [paused, setPaused] = useState(false);
   const streamRef = useRef<LiveEventStream | null>(null);
+  // Owned by the component, not the poller, so it survives Pause → Resume.
+  const lastSeenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (paused) return;
-    const stream = new LiveEventStream(3000);
+
+    const stream = new LiveEventStream(3000, { lastSeenRef });
     streamRef.current = stream;
+
     stream.start((fresh) => {
-      setEvents((prev) => [...fresh, ...prev].slice(0, 500));
+      setEvents((prev) => {
+        // Defensive dedup by event_id in case the backend ever returns a
+        // batch that overlaps with what's already on screen.
+        const seen = new Set(prev.map((e) => e.event_id));
+        const unique = fresh.filter((e) => !seen.has(e.event_id));
+        if (unique.length === 0) return prev;
+        return [...unique, ...prev].slice(0, 500);
+      });
     });
-    return () => stream.stop();
+
+    return () => {
+      stream.stop();
+      streamRef.current = null;
+    };
   }, [paused]);
 
   return (

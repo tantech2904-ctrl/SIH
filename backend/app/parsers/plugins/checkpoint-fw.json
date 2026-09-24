@@ -1,0 +1,22 @@
+{
+  "name": "checkpoint-fw",
+  "vendor": "Check Point",
+  "product": "Firewall",
+  "format": "CheckPoint",
+  "version": "1.0.0",
+  "description": "Check Point Security Gateway firewall log (key=value syslog payload).",
+  "match_criteria": {
+    "contains": ["action=", "src=", "dst="],
+    "regex": "\\bproduct=(?:VPN-1|Firewall)\\b|\\bfw=[A-Za-z0-9_.-]+"
+  },
+  "extraction": {
+    "type": "key-value",
+    "kv_separator": "="
+  },
+  "field_mappings": {
+    "src": "source.ip", "dst": "destination.ip",
+    "s_port": "source.port", "service": "destination.port",
+    "proto": "protocol", "action": "action",
+    "user": "user.name"
+  }
+}

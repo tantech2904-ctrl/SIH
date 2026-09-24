@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.services.audit_service import record_audit
-from app.services.ingest_service import ingest_event
+from app.services.ingest_service import ingest_event, dispatch_enrichment_async
 
 log = get_logger(__name__)
 
@@ -135,6 +135,7 @@ class SyslogUdpListener:
                 },
             )
             db.commit()
+            dispatch_enrichment_async([event.event_id])
             log.info(
                 "syslog.udp.ingested",
                 sender=sender,

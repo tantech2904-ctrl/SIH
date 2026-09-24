@@ -28,10 +28,11 @@ services:
       retries: 20
 
   minio:
-    image: quay.io/minio/minio:latest
-    container_name: ulpf-minio
+    image: ghcr.io/wrkode/openbucket:latest
+    container_name: ulpf-openbucket
     command: server /data --console-address ":9001"
     environment:
+      # Using MINIO_* variables for maximum compatibility
       MINIO_ROOT_USER: ulpfadmin
       MINIO_ROOT_PASSWORD: ulpfadminsecret
     ports:
@@ -40,7 +41,7 @@ services:
     volumes:
       - ulpf_minio:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/minio/health/live || curl -fsS http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -50,6 +51,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ulpf-backend
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -60,6 +62,8 @@ services:
       MINIO_SECRET_KEY: ulpfadminsecret
       MINIO_BUCKET: ulpf-raw
       MINIO_SECURE: "false"
+      IN_DOCKER: "true"
+      ULPF_ENV_LIVE: /app/.env.live
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,6 +73,10 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+      - "5140:5140/udp"
+    volumes:
+      - ./logs:/app/logs:ro
+      - ./.env:/app/.env.live:rw
     command: >
       sh -c "alembic -c alembic/alembic.ini upgrade head &&
              python -m app.db.init_db &&
@@ -79,6 +87,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ulpf-worker
+    restart: unless-stopped
     env_file:
       - .env
     environment:

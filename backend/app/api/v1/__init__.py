@@ -6,6 +6,7 @@ from . import (
     parsers, quarantine, reports, schema, testlab,
     threat_intel,
 )
+from . import settings as settings_api
 
 router = APIRouter()
 
@@ -26,4 +27,5 @@ router.include_router(mappings.router, prefix="/mappings", tags=["mappings"])
 router.include_router(drift.router, prefix="/drift", tags=["drift"])
 router.include_router(testlab.router, prefix="/testlab", tags=["testlab"])
 router.include_router(reports.router, prefix="/reports", tags=["reports"])
+router.include_router(settings_api.router, prefix="/settings", tags=["settings"])
 router.include_router(health.router, tags=["health"])

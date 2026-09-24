@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
+
 from app.api.deps import require_analyst, require_admin
 from app.core.config import settings
 from app.core.rate_limit import limiter
@@ -13,7 +14,7 @@ from app.models.user import User
 from app.schemas.ingest import IngestJsonRequest, IngestResponse, BatchIngestResponse
 from app.parsers.windows_evtx import extract_windows_event_records
 from app.services.audit_service import record_audit
-from app.services.ingest_service import ingest_event
+from app.services.ingest_service import ingest_event, dispatch_enrichment_async
 
 router = APIRouter()
 
@@ -67,6 +68,7 @@ def ingest_json(
                  new_state={"status": event.processing_status,
                             "format": event.detected_format})
     db.commit()
+    dispatch_enrichment_async([event.event_id])
     return _response(event, db)
 
 
@@ -115,6 +117,7 @@ async def ingest_raw(
                      new_state={"record_index": idx, "filename": filename})
 
     db.commit()
+    dispatch_enrichment_async([e.event_id for e in created_events])
     return _response(created_events[0], db) if created_events else _response(
         ingest_event(db, raw_bytes=raw_bytes, source=source, source_type=source_type,
                      filename=filename, content_type=content_type, ingestion_id=ingestion_id),
@@ -183,6 +186,7 @@ async def ingest_batch(
     record_audit(db, actor=user.email, action="INGEST_BATCH", resource="batch",
                  resource_id=ingestion_id, new_state={"accepted": accepted, "rejected": rejected})
     db.commit()
+    dispatch_enrichment_async([r.event_id for r in events_out])
     return BatchIngestResponse(
         ingestion_id=ingestion_id, total=len(lines), accepted=accepted,
         rejected=rejected, events=events_out,

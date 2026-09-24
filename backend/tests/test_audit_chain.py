@@ -87,4 +87,25 @@ def test_verify_chain_detects_deletion(db):
     assert result["reason"] == "chain_break_insertion_or_deletion"
     assert result["broken_audit_id"] == r3.audit_id
 
+def test_verify_chain_survives_timestamp_collision(db):
+    """Three rows inserted in rapid succession may share a timestamp.
+    seq order must still be correct and verification must pass."""
+    ensure_genesis(db)
+    # Force identical timestamps by writing directly.
+    from datetime import datetime, timezone
+    fixed = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Insert via record_audit, then patch timestamps to be identical.
+    r1 = record_audit(db, actor="a@test", action="X", resource="r")
+    r2 = record_audit(db, actor="a@test", action="Y", resource="r")
+    r3 = record_audit(db, actor="a@test", action="Z", resource="r")
+    db.flush()
+    r1.timestamp = fixed
+    r2.timestamp = fixed
+    r3.timestamp = fixed
+    db.commit()
+
+    result = verify_audit_chain(db)
+    assert result["valid"] is True, result
+    assert result["checked"] == 4
 

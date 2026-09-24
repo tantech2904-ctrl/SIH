@@ -244,6 +244,7 @@ def get_registry() -> ParserRegistry:
 
         repo_root = Path(__file__).resolve().parents[3]
         plugin_dirs = [
+            Path(__file__).resolve().parent/ "plugins",
             repo_root / "parsers",
             repo_root.parent / "SIH-2026-LOG-FRAMEWORK" / "parsers",
         ]

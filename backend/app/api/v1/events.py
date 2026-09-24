@@ -22,6 +22,7 @@ from app.services.integrity_service import verify_integrity
 from app.services.replay_service import replay_event
 from app.storage.minio_store import get_object_store
 from app.services.integrity_service import _key_from_location
+from app.services.ingest_service import dispatch_enrichment_async
 
 router = APIRouter()
 
@@ -241,6 +242,8 @@ def post_replay(
     record_audit(db, actor=user.email, action="REPLAY", resource="event",
                  resource_id=event_id, new_state={"result": run.result, "new_status": run.new_status})
     db.commit()
+    if run.result == "SUCCESS":
+        dispatch_enrichment_async([event_id])
     return {
         "replay_id": run.replay_id,
         "previous_status": run.previous_status,

@@ -1,6 +1,13 @@
 import pytest
-
+import socket
 from app.core.ssrf import validate_outbound_url, SSRFBlockedError, classify_ip
+
+def _dns_available() -> bool:
+    try:
+        socket.getaddrinfo("www.virustotal.com", None)
+        return True
+    except socket.gaierror:
+        return False
 
 
 def test_localhost_blocked():
@@ -34,11 +41,9 @@ def test_allowlist_enforced():
     with pytest.raises(SSRFBlockedError):
         validate_outbound_url("https://example.com/", require_allowlist=True)
 
-
+@pytest.mark.skipif(not _dns_available(), reason="requires network DNS resolution")
 def test_known_provider_allowed():
-    # This does not make a network call; only validates the URL.
     validate_outbound_url("https://www.virustotal.com/api/v3/ip_addresses/1.1.1.1", require_allowlist=True)
-
 
 def test_classify_ip():
     assert classify_ip("10.0.0.1") == "PRIVATE"

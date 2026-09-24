@@ -41,7 +41,13 @@ class Settings(BaseSettings):
     SYSLOG_UDP_ENABLED: bool = False
     SYSLOG_UDP_HOST: str = "0.0.0.0"
     SYSLOG_UDP_PORT: int = 5140
-    
+
+    # File tail ingestion (optional, default off)
+    LOG_TAIL_ENABLED: bool = False
+    LOG_TAIL_PATHS: str = ""            # comma-separated absolute paths
+    LOG_TAIL_POLL_SECONDS: float = 1.0
+    LOG_TAIL_FROM_START: bool = False
+
     # Rate limits
     RATE_LIMIT_AUTH: str = "10/minute"
     RATE_LIMIT_INGEST: str = "600/minute"
@@ -96,6 +102,7 @@ class Settings(BaseSettings):
     BOOTSTRAP_AUDITOR_EMAIL: str = "auditor@ulpf.local"
     BOOTSTRAP_AUDITOR_PASSWORD: str = "ChangeMe_Auditor123!"
 
+    RESTART_MODE: str = "auto"
 
     @field_validator("JWT_SECRET")
     @classmethod
@@ -107,6 +114,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def log_tail_paths_list(self) -> List[str]:
+        return [p.strip() for p in self.LOG_TAIL_PATHS.split(",") if p.strip()]
 
     @property
     def is_sqlite(self) -> bool:
@@ -123,3 +134,67 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+def reload_settings() -> None:
+    """Re-read the active .env file and update the cached Settings object.
+
+    Reads from ULPF_ENV_LIVE when set (which points to the bind-mounted
+    .env.live inside the container), otherwise falls back to .env. We do
+    NOT just clear the lru_cache and re-call get_settings() because
+    pydantic-settings is configured for .env only and would miss any
+    values written to .env.live at runtime by the Settings UI.
+    """
+    import os
+    from pathlib import Path
+
+    env_path: Path | None = None
+    live = os.environ.get("ULPF_ENV_LIVE")
+    if live:
+        p = Path(live)
+        if p.exists():
+            env_path = p
+    if env_path is None:
+        p = Path(os.environ.get("ULPF_ENV_FILE", ".env"))
+        if p.exists():
+            env_path = p
+
+    overrides: dict[str, str] = {}
+    if env_path is not None:
+        try:
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                    v = v[1:-1]
+                overrides[k] = v
+        except Exception:
+            overrides = {}
+
+    # Reset the cache and rebuild to pick up any process-level env changes
+    get_settings.cache_clear()
+    fresh = get_settings()
+
+    # Apply file overrides on top of the fresh defaults
+    for field in settings.model_fields:
+        value = overrides.get(field, getattr(fresh, field))
+        try:
+            # Pydantic will coerce strings to the field type on assignment
+            # only if we go through the model's validate_assignment, which
+            # this Settings class does not enable. So coerce manually for
+            # int/bool/float fields.
+            spec = settings.model_fields[field]
+            ann = spec.annotation
+            if ann is int or ann == "int":
+                value = int(value)
+            elif ann is float or ann == "float":
+                value = float(value)
+            elif ann is bool or ann == "bool":
+                if isinstance(value, str):
+                    value = value.strip().lower() in ("true", "1", "yes", "on")
+            setattr(settings, field, value)
+        except Exception:
+            pass

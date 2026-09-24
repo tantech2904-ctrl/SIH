@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.services.audit_service import record_audit
-from app.services.ingest_service import ingest_event
+from app.services.ingest_service import ingest_event, dispatch_enrichment_async
 
 router = APIRouter()
 
@@ -152,6 +152,7 @@ def generate(
     record_audit(db, actor=user.email, action="TESTLAB_GENERATE", resource="testlab",
                  new_state={"scenarios": scenarios, "count": len(results)})
     db.commit()
+    dispatch_enrichment_async([r["event_id"] for r in results])
     return {"generated": len(results), "results": results}
 
 

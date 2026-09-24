@@ -1,0 +1,20 @@
+{
+  "name": "openvpn",
+  "vendor": "OpenVPN",
+  "product": "OpenVPN",
+  "format": "OpenVPN",
+  "version": "1.0.0",
+  "description": "OpenVPN server connection log.",
+  "match_criteria": {
+    "contains": ["OpenVPN", "Peer Connection Initiated"],
+    "regex": "\\bPeer Connection Initiated\\b"
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": "(?P<rt>\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2})?.*?(?P<src>\\d{1,3}(?:\\.\\d{1,3}){3}):(?P<sport>\\d+)\\s+\\[(?P<suser>[^\\]]+)\\]\\s+(?P<action>Peer Connection Initiated)"
+  },
+  "field_mappings": {
+    "src": "source.ip", "sport": "source.port",
+    "suser": "user.name", "action": "action", "rt": "timestamp"
+  }
+}

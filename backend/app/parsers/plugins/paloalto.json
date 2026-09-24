@@ -1,0 +1,20 @@
+{
+  "name": "paloalto",
+  "vendor": "Palo Alto Networks",
+  "product": "PAN-OS",
+  "format": "PANOS",
+  "version": "1.0.0",
+  "description": "Palo Alto Networks PAN-OS TRAFFIC log (comma-separated).",
+  "match_criteria": {
+    "regex": "TRAFFIC,(?:start|end|drop|allow|deny),"
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": "^(?P<action_type>TRAFFIC),(?P<subtype>\\w+),(?P<rt>[^,]+),(?P<src>[^,]+),(?P<dst>[^,]+),(?P<sport>[^,]+),(?P<dport>[^,]+),(?P<proto>[^,]+),(?P<action>[^,]+)"
+  },
+  "field_mappings": {
+    "src": "source.ip", "dst": "destination.ip",
+    "sport": "source.port", "dport": "destination.port",
+    "proto": "protocol", "action": "action", "rt": "timestamp"
+  }
+}

@@ -3,7 +3,11 @@ import { api } from "@/services/api";
 import type { Page } from "@/types";
 
 export function useDashboard() {
-  return useQuery({ queryKey: ["dashboard"], queryFn: () => api.dashboard() });
+  return useQuery({
+    queryKey: ["dashboard"],
+    queryFn: () => api.dashboard(),
+    refetchInterval: 5000,
+  });
 }
 
 export function useEvents(params: Record<string, any>) {
@@ -124,4 +128,23 @@ export function useHealth() {
 
 export function useTestLabScenarios() {
   return useQuery({ queryKey: ["testlab-scenarios"], queryFn: () => api.testlabScenarios() });
+}
+
+export function useSettings() {
+  return useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.getSettings(),
+  });
+}
+
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: Record<string, string>) => api.updateSettings(updates),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+export function useRequestRestart() {
+  return useMutation({ mutationFn: () => api.requestRestart() });
 }

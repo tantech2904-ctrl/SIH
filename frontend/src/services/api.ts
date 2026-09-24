@@ -19,6 +19,9 @@ import type {
   ReplayResult,
   TimelineStage,
   TokenResponse,
+  SettingsListResponse,
+  SettingsUpdateResponse,
+  RestartResponse,
 } from "@/types";
 
 const API_BASE = "/api/v1";
@@ -321,4 +324,14 @@ export const api = {
   health: () => request<any>("/health"),
   ready: () => request<any>("/health/ready"),
   metrics: () => request<any>("/metrics"),
+
+  // Settings
+  getSettings: () => request<SettingsListResponse>("/settings"),
+  updateSettings: (updates: Record<string, string>) =>
+    request<SettingsUpdateResponse>("/settings", {
+      method: "POST",
+      body: JSON.stringify({ updates }),
+    }),
+  requestRestart: () =>
+    request<RestartResponse>("/settings/restart", { method: "POST" }),
 };
