@@ -1,0 +1,63 @@
+{
+  "ulpf_base": "http://localhost:8000",
+  "log_level": "INFO",
+  "log_file": "~/.ulpf/connector.log",
+
+  "auth": {
+    "email": "admin@ulpf.local",
+    "password": "",
+    "password_env": "ULPF_CONNECTOR_PASSWORD"
+  },
+
+  "queue": {
+    "max_in_memory": 1000,
+    "spool_file": "~/.ulpf/spool.jsonl",
+    "spool_replay_on_start": true
+  },
+
+  "http": {
+    "timeout_s": 30.0,
+    "max_retries": 5,
+    "backoff_base_s": 0.5,
+    "backoff_max_s": 30.0
+  },
+
+  "adapters": {
+      "windows_eventlog": {
+        "enabled": "auto",
+        "channels": ["Security", "System", "Application"],
+        "filter_xpath": "*",
+        "poll_seconds": 2.0,
+        "max_events_per_poll": 200,
+        "bookmark_file": "~/.ulpf/win_eventlog.bookmark.json",
+        "resume_from_bookmark": false
+    },
+
+    "linux_journald": {
+      "enabled": "auto",
+      "units": [],
+      "priority_max": 6,
+      "bookmark_file": "~/.ulpf/journald.cursor"
+    },
+
+    "linux_file_tail": {
+      "enabled": "auto",
+      "paths": [],
+      "from_start": false,
+      "poll_seconds": 1.0,
+      "max_line_bytes": 1048576
+    },
+
+    "macos_unified_log": {
+      "enabled": "auto",
+      "predicate": "subsystem == \"com.apple.securityd\" OR process == \"sudo\" OR process == \"sshd\" OR subsystem CONTAINS \"security\" OR eventMessage CONTAINS[c] \"authentication\""
+    },
+
+    "macos_file_tail": {
+      "enabled": "auto",
+      "paths": [],
+      "from_start": false,
+      "poll_seconds": 1.0
+    }
+  }
+}

@@ -23,3 +23,7 @@ class MeResponse(BaseModel):
     email: str
     full_name: str
     roles: list[str]
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+    all_devices: bool = False  # reserved; not implemented yet

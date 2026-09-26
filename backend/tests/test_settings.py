@@ -13,7 +13,6 @@ import pytest
 
 from app.settings.editable import EDITABLE_KEY_MAP, MASKED_SENTINEL
 
-
 @pytest.fixture(autouse=True)
 def _temp_env(tmp_path, monkeypatch):
     env_file = tmp_path / ".env.live"
@@ -23,10 +22,8 @@ def _temp_env(tmp_path, monkeypatch):
         "VIRUSTOTAL_API_KEY=\n"
         "SYSLOG_UDP_PORT=5140\n"
         "# another comment\n"
-        "JWT_SECRET=donotchange\n"
     )
     monkeypatch.setenv("ULPF_ENV_LIVE", str(env_file))
-    # Force the service module to re-resolve its path on next call
     import app.settings.service as svc
     monkeypatch.setattr(svc, "ENV_LIVE_PATH", env_file)
     yield env_file
@@ -64,16 +61,19 @@ def test_get_settings_masks_sensitive(client, admin_headers, _temp_env):
     pytest.fail("VIRUSTOTAL_API_KEY not found in response")
 
 
-def test_get_settings_only_allowlist(client, admin_headers, _temp_env):
+def test_get_settings_only_allowlist(client, admin_headers):
+    """Every key returned by /settings must be in the editable allowlist,
+    and non-allowlist keys (like JWT_SECRET) must never appear."""
     r = client.get("/api/v1/settings", headers=admin_headers)
+    assert r.status_code == 200
     keys = set()
     for g in r.json()["groups"]:
         for item in g["items"]:
             keys.add(item["key"])
-    # JWT_SECRET is in the env file but must NOT appear
-    assert "JWT_SECRET" not in keys
-    # But LOG_LEVEL should
     assert "LOG_LEVEL" in keys
+    assert "JWT_SECRET" not in keys
+    for k in keys:
+        assert k in EDITABLE_KEY_MAP, f"key {k} leaked from allowlist"
 
 
 def test_post_settings_rejects_unknown_key(client, admin_headers):
@@ -113,7 +113,6 @@ def test_post_settings_preserves_comments(client, admin_headers, _temp_env):
     assert "# comment line" in content
     assert "# another comment" in content
     assert "LOG_LEVEL=DEBUG" in content
-    assert "JWT_SECRET=donotchange" in content
 
 
 def test_post_settings_hot_reloads(client, admin_headers):

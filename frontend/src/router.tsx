@@ -5,6 +5,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import LiveStream from "@/pages/LiveStream";
 import EventExplorer from "@/pages/EventExplorer";
+import Connectors from "@/pages/Connectors";
 import EventDetail from "@/pages/EventDetail";
 import Ingest from "@/pages/Ingest";
 import FormatDetection from "@/pages/FormatDetection";
@@ -44,6 +45,7 @@ export function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/live" element={<LiveStream />} />
         <Route path="/events" element={<EventExplorer />} />
+        <Route path="/connectors" element={<Connectors />} />
         <Route path="/events/:id" element={<EventDetail />} />
         <Route path="/ingest" element={<Ingest />} />
         <Route path="/format" element={<FormatDetection />} />

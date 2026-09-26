@@ -1,11 +1,14 @@
 from functools import lru_cache
+import logging
 from typing import List
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_log = logging.getLogger(__name__)
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", ".env.live"), case_sensitive=False, extra="ignore")
 
     # App
     APP_ENV: str = "development"
@@ -37,6 +40,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024
     MAX_EVENT_BYTES: int = 1 * 1024 * 1024
 
+    # SSE
+    SSE_KEEPALIVE_SECONDS: int = 15
+    SSE_REPLAY_MAX: int = 200
+    EVENT_BUS_CHANNEL: str = "ulpf:events"
+
     # Syslog UDP ingestion (optional, default off)
     SYSLOG_UDP_ENABLED: bool = False
     SYSLOG_UDP_HOST: str = "0.0.0.0"
@@ -44,7 +52,7 @@ class Settings(BaseSettings):
 
     # File tail ingestion (optional, default off)
     LOG_TAIL_ENABLED: bool = False
-    LOG_TAIL_PATHS: str = ""            # comma-separated absolute paths
+    LOG_TAIL_PATHS: str = ""
     LOG_TAIL_POLL_SECONDS: float = 1.0
     LOG_TAIL_FROM_START: bool = False
 
@@ -135,14 +143,24 @@ def get_settings() -> Settings:
 
 settings = get_settings()
 
-def reload_settings() -> None:
-    """Re-read the active .env file and update the cached Settings object.
 
-    Reads from ULPF_ENV_LIVE when set (which points to the bind-mounted
-    .env.live inside the container), otherwise falls back to .env. We do
-    NOT just clear the lru_cache and re-call get_settings() because
-    pydantic-settings is configured for .env only and would miss any
-    values written to .env.live at runtime by the Settings UI.
+def reload_settings() -> None:
+    """Re-read the active env file and update the cached Settings singleton.
+
+    File resolution order:
+      1. ULPF_ENV_LIVE (bind-mounted /app/.env.live in Docker)
+      2. ULPF_ENV_FILE (local .env), defaulting to ".env"
+
+    Behavior:
+      - If neither file exists, this is a no-op.
+      - The whole file is validated BEFORE any value is applied. If any
+        field fails validation (e.g. JWT_SECRET < 32 chars), no values are
+        applied and the previous singleton state is preserved. This makes
+        the reload atomic — partial application is not supported.
+      - Does NOT mutate os.environ. Variables set by the container runtime
+        (e.g. DATABASE_URL, REDIS_URL in docker-compose's environment: block)
+        remain authoritative for those keys, which is correct — those are
+        structural and not UI-editable.
     """
     import os
     from pathlib import Path
@@ -158,43 +176,58 @@ def reload_settings() -> None:
         if p.exists():
             env_path = p
 
+    if env_path is None:
+        _log.debug("settings.reload.no_file")
+        return
+
     overrides: dict[str, str] = {}
-    if env_path is not None:
-        try:
-            for raw in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                k = k.strip()
-                v = v.strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-                    v = v[1:-1]
-                overrides[k] = v
-        except Exception:
-            overrides = {}
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                v = v[1:-1]
+            overrides[k] = v
+    except Exception as e:
+        _log.warning("settings.reload.read_failed error=%s", e)
+        return
 
-    # Reset the cache and rebuild to pick up any process-level env changes
-    get_settings.cache_clear()
-    fresh = get_settings()
-
-    # Apply file overrides on top of the fresh defaults
-    for field in settings.model_fields:
-        value = overrides.get(field, getattr(fresh, field))
+    # Build a candidate dict: current singleton values + file overrides,
+    # coerced to the target field types.
+    candidate: dict = {k: getattr(settings, k) for k in settings.model_fields}
+    for field, raw_value in overrides.items():
+        if field not in settings.model_fields:
+            continue
         try:
-            # Pydantic will coerce strings to the field type on assignment
-            # only if we go through the model's validate_assignment, which
-            # this Settings class does not enable. So coerce manually for
-            # int/bool/float fields.
             spec = settings.model_fields[field]
             ann = spec.annotation
             if ann is int or ann == "int":
-                value = int(value)
+                value = int(raw_value)
             elif ann is float or ann == "float":
-                value = float(value)
+                value = float(raw_value)
             elif ann is bool or ann == "bool":
-                if isinstance(value, str):
-                    value = value.strip().lower() in ("true", "1", "yes", "on")
+                value = str(raw_value).strip().lower() in ("true", "1", "yes", "on")
+            else:
+                value = raw_value
+            candidate[field] = value
+        except Exception as e:
+            _log.warning("settings.reload.coerce_failed field=%s error=%s", field, e)
+            # Keep the current value for this field.
+
+    # Validate atomically. If any field fails, apply nothing.
+    try:
+        Settings(**candidate)
+    except Exception as e:
+        _log.warning("settings.reload.validation_failed error=%s", e)
+        return
+
+    # All good — apply.
+    for field, value in candidate.items():
+        try:
             setattr(settings, field, value)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("settings.reload.apply_failed field=%s error=%s", field, e)

@@ -20,6 +20,7 @@ class EventListItem(BaseModel):
     processing_status: str
     detected_format: Optional[str] = None
     parser_id: Optional[str] = None
+    source_type: Optional[str] = None
 
 
 class EventDetail(BaseModel):

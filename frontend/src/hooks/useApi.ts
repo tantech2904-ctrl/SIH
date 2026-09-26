@@ -148,3 +148,35 @@ export function useUpdateSettings() {
 export function useRequestRestart() {
   return useMutation({ mutationFn: () => api.requestRestart() });
 }
+
+export function useConnectors() {
+  return useQuery({
+    queryKey: ["connectors"],
+    queryFn: () => api.listConnectors(),
+    refetchInterval: 15000,
+  });
+}
+
+export function useConnectorConfig(id: string | undefined) {
+  return useQuery({
+    queryKey: ["connector-config", id],
+    queryFn: () => api.getConnectorConfig(id!),
+    enabled: !!id,
+  });
+}
+
+export function useSetConnectorConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: { desired_adapters: string[] | null; poll_interval_s?: number };
+    }) => api.setConnectorConfig(id, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+    },
+  });
+}

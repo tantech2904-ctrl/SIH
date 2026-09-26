@@ -161,12 +161,54 @@ def _apply_transform(canonical: str, value: Any) -> tuple[str, Any]:
     return "direct", value
 
 
+# Windows Security-channel EventIDs with well-known meanings.
+# See https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/
+_WIN_EVENT_TYPES: dict[int, str] = {
+    4624: "authentication",       # An account was successfully logged on
+    4625: "authentication",       # An account failed to log on
+    4634: "authentication",       # An account was logged off
+    4647: "authentication",       # User initiated logoff
+    4648: "authentication",       # A logon was attempted using explicit credentials
+    4672: "privilege_escalation", # Special privileges assigned to new logon
+    4688: "process_creation",     # A new process has been created
+    4689: "process_termination",  # A process has exited
+    4720: "account_management",   # A user account was created
+    4722: "account_management",   # A user account was enabled
+    4724: "account_management",   # An attempt was made to reset an account's password
+    4725: "account_management",   # A user account was disabled
+    4726: "account_management",   # A user account was deleted
+    4728: "group_management",     # A member was added to a security-enabled global group
+    4732: "group_management",     # A member was added to a security-enabled local group
+    4756: "group_management",     # A member was added to a security-enabled universal group
+    4768: "authentication",       # A Kerberos authentication ticket (TGT) was requested
+    4769: "authentication",       # A Kerberos service ticket was requested
+    4771: "authentication",       # Kerberos pre-authentication failed
+    4776: "authentication",       # The computer attempted to validate the credentials for an account
+    5140: "network",              # A network share object was accessed
+    5145: "network",              # A network share object was checked to see whether client can be granted desired access
+    5156: "network",              # The Windows Filtering Platform has allowed a connection
+    5157: "network",              # The Windows Filtering Platform has blocked a connection
+    7045: "service_installation", # A service was installed in the system
+}
+
+
 def _infer_event_type(fields: dict[str, Any]) -> str:
     """Best-effort event_type inference using presence of canonical fields."""
     explicit = fields.get("event_type")
-    if explicit:
+    if explicit and str(explicit).lower() not in ("unknown", ""):
         return str(explicit).lower()
-    # Heuristics
+
+    # --- Windows Security Event ID mapping ---
+    event_id = fields.get("event_id")
+    if event_id:
+        try:
+            eid = int(str(event_id).strip())
+        except Exception:
+            eid = None
+        if eid is not None and eid in _WIN_EVENT_TYPES:
+            return _WIN_EVENT_TYPES[eid]
+
+    # Heuristics based on message text
     msg = (str(fields.get("name", "")) + " " + str(fields.get("message", ""))).lower()
     if any(k in msg for k in ["login", "logon", "auth", "signin", "sign-in", "logout"]):
         return "authentication"
@@ -189,11 +231,16 @@ def _infer_event_type(fields: dict[str, Any]) -> str:
 
 def _infer_category(fields: dict[str, Any], event_type: str) -> str:
     explicit = fields.get("category")
-    if explicit:
+    if explicit and str(explicit).lower() not in ("", "unknown", "other"):
         return str(explicit).lower()
     mapping = {
         "authentication": "iam",
         "privilege_escalation": "iam",
+        "account_management": "iam",
+        "group_management": "iam",
+        "process_creation": "system_activity",
+        "process_termination": "system_activity",
+        "service_installation": "system_activity",
         "network": "network_activity",
         "malware": "security_finding",
         "vulnerability": "security_finding",

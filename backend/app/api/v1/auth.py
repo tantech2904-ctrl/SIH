@@ -7,12 +7,15 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import (
-    create_access_token, create_refresh_token, decode_token,
+    create_access_token, create_refresh_token, decode_token, decode_token_unverified,
     hash_password, verify_password,
 )
 from app.db.session import get_db
+from app.models.refresh_token import RefreshToken
 from app.models.user import User, Role
-from app.schemas.auth import LoginRequest, TokenResponse, MeResponse, RegisterRequest
+from app.schemas.auth import (
+    LoginRequest, TokenResponse, MeResponse, RegisterRequest, LogoutRequest,
+)
 from app.services.audit_service import record_audit
 
 router = APIRouter()
@@ -29,12 +32,22 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
                      user_agent=request.headers.get("user-agent"))
         db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
     roles = user.role_names()
     access = create_access_token(user.email, roles)
-    refresh = create_refresh_token(user.email)
+    refresh, jti, expires_at = create_refresh_token(user.email)
+
+    db.add(RefreshToken(
+        jti=jti,
+        user_email=user.email,
+        expires_at=expires_at,
+        source_ip=request.client.host if request.client else None,
+        user_agent=(request.headers.get("user-agent") or "")[:512] or None,
+    ))
     user.last_login_at = datetime.now(timezone.utc)
     record_audit(db, actor=user.email, action="LOGIN_SUCCESS", resource="user",
-                 resource_id=user.id, source_ip=request.client.host if request.client else None,
+                 resource_id=user.id,
+                 source_ip=request.client.host if request.client else None,
                  user_agent=request.headers.get("user-agent"))
     db.commit()
     return TokenResponse(access_token=access, refresh_token=refresh, token_type="bearer")
@@ -46,26 +59,104 @@ def refresh(request: Request, body: dict, db: Session = Depends(get_db)):
     token = body.get("refresh_token", "")
     if not token:
         raise HTTPException(status_code=400, detail="Missing refresh_token")
+
     try:
         payload = decode_token(token)
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
-    user = db.query(User).filter(User.email == payload.get("sub")).first()
+
+    jti = payload.get("jti")
+    if not jti:
+        # Pre-3.11.7 refresh token — no jti, no DB row. Force re-login.
+        raise HTTPException(status_code=401, detail="Refresh token needs re-authentication")
+
+    row = db.query(RefreshToken).filter(RefreshToken.jti == jti).first()
+    if row is None:
+        raise HTTPException(status_code=401, detail="Unknown refresh token")
+
+    if row.used_at is not None:
+        # REUSE DETECTED. Revoke every active token for this user.
+        now = datetime.now(timezone.utc)
+        revoked = (
+            db.query(RefreshToken)
+            .filter(
+                RefreshToken.user_email == row.user_email,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .update({RefreshToken.revoked_at: now}, synchronize_session=False)
+        )
+        record_audit(
+            db, actor=row.user_email, action="REFRESH_REUSE_DETECTED",
+            resource="user", resource_id=row.user_email,
+            source_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            new_state={"revoked_count": revoked, "reused_jti": jti},
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Refresh token reuse detected")
+
+    if row.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Refresh token revoked")
+
+    user = db.query(User).filter(User.email == row.user_email).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User inactive")
+
     roles = user.role_names()
+    now = datetime.now(timezone.utc)
+
+    new_refresh, new_jti, new_expires = create_refresh_token(user.email)
+    row.used_at = now
+    row.replaced_by_jti = new_jti
+
+    db.add(RefreshToken(
+        jti=new_jti,
+        user_email=user.email,
+        expires_at=new_expires,
+        source_ip=request.client.host if request.client else None,
+        user_agent=(request.headers.get("user-agent") or "")[:512] or None,
+    ))
+    db.commit()
+
     return TokenResponse(
         access_token=create_access_token(user.email, roles),
-        refresh_token=create_refresh_token(user.email),
+        refresh_token=new_refresh,
         token_type="bearer",
     )
 
 
 @router.post("/logout")
-def logout(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    record_audit(db, actor=user.email, action="LOGOUT", resource="user", resource_id=user.id)
+def logout(
+    request: Request,
+    body: LogoutRequest | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    revoked_count = 0
+    if body and body.refresh_token:
+        try:
+            payload = decode_token_unverified(body.refresh_token)
+            jti = payload.get("jti")
+            if jti and payload.get("sub") == user.email:
+                now = datetime.now(timezone.utc)
+                revoked_count = (
+                    db.query(RefreshToken)
+                    .filter(
+                        RefreshToken.jti == jti,
+                        RefreshToken.revoked_at.is_(None),
+                    )
+                    .update({RefreshToken.revoked_at: now}, synchronize_session=False)
+                )
+        except ValueError:
+            # Idempotent logout — malformed or expired token, nothing to revoke.
+            pass
+
+    record_audit(db, actor=user.email, action="LOGOUT", resource="user",
+                 resource_id=user.id,
+                 new_state={"revoked_refresh_tokens": revoked_count})
     db.commit()
     return {"status": "ok"}
 

@@ -14,6 +14,7 @@ export default function EventExplorer() {
   const [eventType, setEventType] = useState("");
   const [sourceIp, setSourceIp] = useState("");
   const [destIp, setDestIp] = useState("");
+  const [sourceType, setSourceType] = useState(""); 
   const [minRisk, setMinRisk] = useState("");
   const [page, setPage] = useState(1);
   const size = 50;
@@ -26,11 +27,12 @@ export default function EventExplorer() {
       event_type: eventType || undefined,
       source_ip: sourceIp || undefined,
       destination_ip: destIp || undefined,
+      source_type: sourceType || undefined,
       min_risk: minRisk ? Number(minRisk) : undefined,
       page,
       size,
     }),
-    [q, severity, format, eventType, sourceIp, destIp, minRisk, page],
+    [q, severity, format, eventType, sourceIp, destIp, sourceType, minRisk, page],
   );
 
   const { data, isLoading, error } = useEvents(params);
@@ -46,7 +48,7 @@ export default function EventExplorer() {
         </div>
       </div>
 
-      <div className="panel p-3 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className="panel p-3 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
         <div className="lg:col-span-2">
           <label className="label">Search</label>
           <div className="relative">
@@ -95,7 +97,14 @@ export default function EventExplorer() {
           <input className="input font-mono" value={destIp}
             onChange={(e) => { setDestIp(e.target.value); setPage(1); }} />
         </div>
+        <div>
+          <label className="label">Source Type</label>
+          <input className="input" value={sourceType}
+            onChange={(e) => { setSourceType(e.target.value); setPage(1); }}
+            placeholder="journald…" />
+        </div>
       </div>
+
 
       <div className="flex items-center gap-2">
         <label className="text-2xs text-soc-textDim">Min risk</label>
@@ -125,6 +134,7 @@ export default function EventExplorer() {
                   <th>User</th>
                   <th>Vendor</th>
                   <th>Format</th>
+                  <th>Source</th>                  
                   <th>Threat</th>
                   <th>Message</th>
                   <th>Risk</th>
@@ -142,10 +152,11 @@ export default function EventExplorer() {
                     <td><SeverityBadge severity={e.severity} small /></td>
                     <td>{e.event_type}</td>
                     <td className="font-mono">{e.source_ip || "—"}</td>
-                    <td className="font-mono">{e.destination_ip || "—"}</td>
+                    <td className="font-mono">{e.destination_ip || "—"}</td>                 
                     <td>{e.user_name || "—"}</td>
                     <td>{e.vendor || "—"}</td>
                     <td className="text-soc-textMuted">{e.detected_format || "—"}</td>
+                    <td className="text-soc-textMuted font-mono text-2xs">{e.source_type || "—"}</td>                    
                     <td>
                       {e.threat_malicious ? (
                         <span className="badge border text-red-400 bg-red-500/10 border-red-500/40">

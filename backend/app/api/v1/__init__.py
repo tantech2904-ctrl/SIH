@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from . import (
-    alerts, attck, audit, auth, dashboard, drift, enrichment,
+    alerts, attck, audit, auth, connectors, dashboard, drift, enrichment,
     events, health, incidents, ingest, mappings,
     parsers, quarantine, reports, schema, testlab,
     threat_intel,
@@ -13,6 +13,7 @@ router = APIRouter()
 router.include_router(auth.router, prefix="/auth", tags=["auth"])
 router.include_router(ingest.router, prefix="/ingest", tags=["ingest"])
 router.include_router(events.router, prefix="/events", tags=["events"])
+router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 router.include_router(quarantine.router, prefix="/quarantine", tags=["quarantine"])
 router.include_router(parsers.router, prefix="/parsers", tags=["parsers"])
 router.include_router(enrichment.router, prefix="/enrichment", tags=["enrichment"])

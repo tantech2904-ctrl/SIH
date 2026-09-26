@@ -1,0 +1,17 @@
+# ============================================================
+# ULPF Backend - Optional dependencies
+#
+# These are NOT needed for the core pipeline. Install only if
+# you want the corresponding feature. They may require a C
+# compiler on some systems; excluded from base requirements
+# so setup stays frictionless.
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements-optional.txt
+# ============================================================
+
+# Windows EVTX binary parser.
+# The backend already parses Windows Event XML via xmltodict
+# (in the base requirements). This package is only needed if
+# you want to ingest raw binary .evtx files directly.
+python-evtx>=0.8.1

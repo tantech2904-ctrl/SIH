@@ -33,6 +33,7 @@ export interface EventListItem {
   processing_status: string;
   detected_format: string | null;
   parser_id: string | null;
+  source_type?: string; 
 }
 
 export interface EventDetail {
@@ -293,4 +294,29 @@ export interface RestartResponse {
   restarted: boolean;
   mode: string;
   message: string;
+}
+
+export interface Connector {
+  connector_id: string;
+  hostname: string;
+  os: string;
+  version: string;
+  adapters: string[];                       // running
+  available_adapters: string[];             // capability
+  desired_adapters: string[] | null;        // null = no opinion
+  config_poll_interval_s: number;
+  first_seen: string;
+  last_heartbeat: string;
+  last_event_at: string | null;
+  events_total: number;
+  status: "online" | "stale" | "offline";
+}
+
+export interface ConnectorConfig {
+  desired_adapters: string[] | null;
+  poll_interval_s: number;
+}
+export interface ConnectorList {
+  items: Connector[];
+  total: number;
 }

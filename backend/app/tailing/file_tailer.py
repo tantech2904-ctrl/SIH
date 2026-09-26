@@ -32,7 +32,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.services.audit_service import record_audit
-from app.services.ingest_service import ingest_event, dispatch_enrichment_async
+from app.services.ingest_service import ingest_event, dispatch_after_commit
 
 log = get_logger(__name__)
 
@@ -251,7 +251,7 @@ class FileTailer:
                 )
                 # Dispatch enrichment outside the try that might swallow
                 # exceptions — but dispatch is itself best-effort.
-                dispatch_enrichment_async(ingested_ids)
+                dispatch_after_commit(db, ingested_ids)
         except Exception as e:
             db.rollback()
             log.exception("file_tail.ingest_batch_failed", path=path, error=str(e)[:500])

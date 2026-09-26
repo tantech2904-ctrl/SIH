@@ -2,6 +2,8 @@ import type {
   AlertItem,
   AuditItem,
   AuditVerifyResult,
+  ConnectorList,
+  ConnectorConfig,
   DashboardData,
   DriftItem,
   EventDetail,
@@ -129,11 +131,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
+  logout: () => {
+    const rt = localStorage.getItem("ulpf.refresh_token");
+    return request<{ status: string }>("/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+  },
   me: () => request<Me>("/auth/me"),
 
   // Dashboard
   dashboard: () => request<DashboardData>("/dashboard"),
+
+  // Connectors
+  listConnectors: () => request<ConnectorList>("/connectors"),
+  getConnectorConfig: (id: string) =>
+    request<ConnectorConfig>(`/connectors/${id}/config`),
+  setConnectorConfig: (
+    id: string,
+    body: { desired_adapters: string[] | null; poll_interval_s?: number },
+  ) =>
+    request<ConnectorConfig>(`/connectors/${id}/config`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Events
   listEvents: (params: Record<string, string | number | undefined> = {}) => {
@@ -334,4 +355,5 @@ export const api = {
     }),
   requestRestart: () =>
     request<RestartResponse>("/settings/restart", { method: "POST" }),
+
 };

@@ -3,7 +3,6 @@
 Tests use an in-memory SQLite database and a local object store so they can
 run without PostgreSQL, MinIO, or Redis.
 """
-from __future__ import annotations
 
 import os
 
@@ -87,3 +86,53 @@ def analyst_headers(analyst_token: str) -> dict:
 @pytest.fixture()
 def auditor_headers(auditor_token: str) -> dict:
     return {"Authorization": f"Bearer {auditor_token}"}
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the in-memory slowapi limiter between tests so auth-heavy
+    suites don't hit the per-minute cap."""
+    try:
+        from app.core.rate_limit import limiter
+        # slowapi exposes reset() on current versions; fall back to the
+        # underlying storage if not.
+        if hasattr(limiter, "reset"):
+            limiter.reset()
+        else:
+            limiter._storage.reset()
+    except Exception:
+        pass
+    yield
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(tmp_path, monkeypatch):
+    """Give each test a clean settings state.
+
+    - Point the settings service at a per-test temp env file so writes
+      during a test never touch the repo-root .env.
+    - Point reload_settings() at a path that doesn't exist so it never
+      accidentally reads a real .env from the developer's machine.
+    - Snapshot the settings singleton before the test and restore it
+      after, so mutations don't leak between tests.
+    """
+    from app.core.config import settings
+    from app.settings import service as settings_service
+
+    env_file = tmp_path / "test.env"
+    env_live = tmp_path / "test.env.live"
+
+    # Override the module-level constants the settings service reads from.
+    monkeypatch.setattr(settings_service, "ENV_LIVE_PATH", env_live, raising=False)
+    monkeypatch.setattr(settings_service, "ENV_FALLBACK_PATH", env_file, raising=False)
+
+    # Override the env vars reload_settings() checks.
+    monkeypatch.setenv("ULPF_ENV_LIVE", str(env_live))
+    monkeypatch.setenv("ULPF_ENV_FILE", str(env_file))
+
+    # Snapshot the singleton.
+    snapshot = {k: getattr(settings, k) for k in settings.model_fields}
+    yield
+    for k, v in snapshot.items():
+        try:
+            setattr(settings, k, v)
+        except Exception:
+            pass

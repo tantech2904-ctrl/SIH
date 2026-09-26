@@ -1,6 +1,8 @@
-
 from datetime import datetime
 from typing import Optional
+import asyncio
+import json
+from fastapi.responses import StreamingResponse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, func, and_, or_
@@ -22,7 +24,7 @@ from app.services.integrity_service import verify_integrity
 from app.services.replay_service import replay_event
 from app.storage.minio_store import get_object_store
 from app.services.integrity_service import _key_from_location
-from app.services.ingest_service import dispatch_enrichment_async
+from app.services.ingest_service import dispatch_after_commit
 
 router = APIRouter()
 
@@ -42,6 +44,7 @@ def list_events(
     destination_ip: Optional[str] = None,
     event_type: Optional[str] = None,
     parser_id: Optional[str] = None,
+    source_type: Optional[str] = None,
     min_risk: Optional[int] = None,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
@@ -64,6 +67,8 @@ def list_events(
         query = query.filter(CanonicalEvent.event_type == event_type)
     if parser_id:
         query = query.filter(Event.parser_id == parser_id)
+    if source_type:
+        query = query.filter(Event.source_type == source_type)
     if min_risk is not None:
         query = query.filter(CanonicalEvent.risk_score >= min_risk)
     if q:
@@ -103,10 +108,138 @@ def list_events(
             threat_context=threat_context,
             processing_status=e.processing_status,
             detected_format=e.detected_format,
+            source_type=e.source_type,
             parser_id=e.parser_id,
         ))
     pages = (total + size - 1) // size if size else 0
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
+
+
+@router.get("/stream")
+async def stream_events(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    severity: Optional[str] = None,
+    format: Optional[str] = None,
+    event_type: Optional[str] = None,
+    source_type: Optional[str] = None,
+    min_risk: Optional[int] = None,
+):
+    """Server-Sent Events stream of new events.
+
+    Auth: bearer header (standard). Browser EventSource cannot send headers,
+    so the frontend uses a fetch-based reader — see frontend/src/services/sse.ts.
+
+    Replay semantics:
+      - No Last-Event-ID header → no replay. A fresh connection starts live.
+      - Last-Event-ID present → replay events strictly newer than the anchor
+        event's timestamp, ordered ascending, capped at SSE_REPLAY_MAX.
+      - Anchor missing (deleted/expired) → skip replay entirely.
+
+    No rate limit: this is one long-lived connection per client, not N
+    requests. The slowapi limiter would count it as a single request, but
+    holding it open would exhaust the per-minute budget for other requests
+    from the same IP, so we deliberately do not decorate it.
+    """
+    from app.services.event_bus import subscribe
+
+    # Prepare filter set for server-side rejection.
+    sev = severity.upper() if severity else None
+    risk_floor = int(min_risk) if min_risk is not None else None
+
+    def _matches(payload: dict) -> bool:
+        if sev and (payload.get("severity") or "").upper() != sev:
+            return False
+        if format and payload.get("detected_format") != format:
+            return False
+        if event_type and payload.get("event_type") != event_type:
+            return False
+        if source_type and payload.get("source_type") != source_type:
+            return False
+        if risk_floor is not None:
+            rs = payload.get("risk_score")
+            if rs is None or int(rs) < risk_floor:
+                return False
+        return True
+
+    async def event_stream():
+        # Replay events strictly newer than the client's last-seen event.
+        #
+        # Last-Event-ID is the cse_id of the last event the client received.
+        # We resolve it to that event's timestamp and replay anything with
+        # timestamp > that value, ordered ascending, capped at
+        # SSE_REPLAY_MAX. Events are never replayed on a fresh connection
+        # (no Last-Event-ID), so a page reload starts clean.
+        last_id = request.headers.get("last-event-id")
+        if last_id:
+            try:
+                from app.services.ingest_service import _sse_payload
+
+                anchor = (
+                    db.query(CanonicalEvent)
+                    .filter(CanonicalEvent.cse_id == last_id)
+                    .first()
+                )
+                if anchor is not None:
+                    rows = (
+                        db.query(CanonicalEvent)
+                        .filter(CanonicalEvent.timestamp > anchor.timestamp)
+                        .order_by(CanonicalEvent.timestamp.asc())
+                        .limit(settings.SSE_REPLAY_MAX)
+                        .all()
+                    )
+                    for row in rows:
+                        payload = _sse_payload(row)
+                        if not _matches(payload):
+                            continue
+                        yield f"event: event\nid: {row.cse_id}\ndata: {json.dumps(payload, default=str)}\n\n"
+                else:
+                    # Anchor no longer exists (event deleted/expired). Skip
+                    # replay entirely — a fresh connection would be cleaner
+                    # than guessing.
+                    yield ": replay anchor not found, skipping replay\n\n"
+            except Exception as e:
+                yield f": replay error: {e}\n\n"
+
+        yield ": connected\n\n"
+
+        keepalive = settings.SSE_KEEPALIVE_SECONDS
+        last_keepalive = asyncio.get_event_loop().time()
+
+        try:
+            async for msg in subscribe():
+                # Check client disconnect between messages
+                if await request.is_disconnected():
+                    break
+
+                payload = msg.get("payload") or {}
+                if not _matches(payload):
+                    continue
+
+                event_id = msg.get("event_id") or payload.get("event_id") or ""
+                yield f"event: event\nid: {event_id}\ndata: {json.dumps(payload, default=str)}\n\n"
+                last_keepalive = asyncio.get_event_loop().time()
+
+                # Send a keepalive if it's been too long without events.
+                now = asyncio.get_event_loop().time()
+                if now - last_keepalive >= keepalive:
+                    yield ": keepalive\n\n"
+                    last_keepalive = now
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            yield f": stream error: {e}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # tells nginx not to buffer
+        },
+    )
 
 
 @router.get("/{event_id}", response_model=EventDetail)
@@ -243,7 +376,7 @@ def post_replay(
                  resource_id=event_id, new_state={"result": run.result, "new_status": run.new_status})
     db.commit()
     if run.result == "SUCCESS":
-        dispatch_enrichment_async([event_id])
+        dispatch_after_commit(db, [event_id])
     return {
         "replay_id": run.replay_id,
         "previous_status": run.previous_status,

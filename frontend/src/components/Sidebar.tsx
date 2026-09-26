@@ -3,6 +3,7 @@ import {
   LayoutDashboard, Radio, Search, Upload, FileSearch, Puzzle, GitBranch,
   ShieldAlert, Activity, Map, Crosshair, Bug, Bell, FolderSearch,
   ScrollText, FlaskConical, FileText, HeartPulse, Settings, Layers, Network,
+  Server,
 } from "lucide-react";
 
 const NAV = [
@@ -10,6 +11,7 @@ const NAV = [
     { to: "/dashboard", label: "SOC Dashboard", icon: LayoutDashboard },
     { to: "/live", label: "Live Stream", icon: Radio },
     { to: "/events", label: "Event Explorer", icon: Search },
+    { to: "/connectors", label: "Connectors", icon: Server },
     { to: "/ingest", label: "Log Ingestion", icon: Upload },
   ]},
   { section: "Pipeline", items: [

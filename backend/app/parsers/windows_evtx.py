@@ -5,19 +5,39 @@ from pathlib import Path
 from typing import Any
 
 import xmltodict
-from Evtx.Evtx import Evtx
 
 from app.parsers.base import BaseParser, DetectionResult, ParseResult
 
+# python-evtx is an optional dependency. It requires a C compiler to
+# install on Python 3.12+. If it's missing, binary .evtx ingestion is
+# unavailable, but XML-based EVTX parsing still works (see below).
+try:
+    from Evtx.Evtx import Evtx  # type: ignore  # noqa: F401
+    _EVTX_AVAILABLE = True
+except ImportError:
+    Evtx = None  # type: ignore
+    _EVTX_AVAILABLE = False
+
 
 def extract_windows_event_records(raw_bytes: bytes) -> list[str]:
-    """Convert native Windows EVTX/EVT binary data into XML event records."""
+    """Convert native Windows EVTX/EVT binary data into XML event records.
+
+    Raises RuntimeError if binary input is given but python-evtx is not
+    installed.
+    """
     if not raw_bytes:
         return []
 
     # If the payload is already plain XML text, leave it to the existing XML pipeline.
     if raw_bytes.lstrip().startswith(b"<"):
         return [raw_bytes.decode("utf-8", errors="replace")]
+
+    # Binary .evtx requires the optional python-evtx package.
+    if not _EVTX_AVAILABLE:
+        raise RuntimeError(
+            "Binary .evtx ingestion requires the optional 'python-evtx' "
+            "package. Install it with:  pip install python-evtx"
+        )
 
     records: list[str] = []
     try:
@@ -75,7 +95,15 @@ class WindowsEventLogParser(BaseParser):
             if payload.lstrip().startswith(b"<"):
                 text = payload.decode("utf-8", errors="replace")
             else:
-                records = extract_windows_event_records(payload)
+                try:
+                    records = extract_windows_event_records(payload)
+                except RuntimeError as e:
+                    return ParseResult(
+                        success=False,
+                        parser_id=self.parser_id,
+                        parser_version=self.version,
+                        errors=[str(e)],
+                    )
                 if not records:
                     return ParseResult(
                         success=False,
@@ -136,10 +164,23 @@ class WindowsEventLogParser(BaseParser):
         event_data_payload = _event_data_fields(event_data)
         fields.update(event_data_payload)
 
-        # A best-effort operation summary for downstream mapping
-        event_message = event.get("RenderingInfo", {}).get("Message") or event_data_payload.get("message")
+        # Best-effort message: prefer the rendered <RenderingInfo><Message>,
+        # fall back to EventData['message'], then synthesize a short summary
+        # from the top EventData fields so the CSE and UI always have text.
+        event_message = (
+            (event.get("RenderingInfo") or {}).get("Message")
+            or event_data_payload.get("message")
+        )
         if event_message:
-            fields["message"] = event_message
+            fields["message"] = str(event_message)[:1024]
+        elif event_data_payload:
+            parts = [
+                f"{k}={v}"
+                for k, v in event_data_payload.items()
+                if v and k != "event_data"
+            ][:6]
+            if parts:
+                fields["message"] = " ".join(parts)[:1024]
 
         return ParseResult(
             success=True,

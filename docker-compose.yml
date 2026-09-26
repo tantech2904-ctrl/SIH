@@ -52,8 +52,6 @@ services:
       dockerfile: Dockerfile
     container_name: ulpf-backend
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf
       REDIS_URL: redis://redis:6379/0
@@ -88,8 +86,6 @@ services:
       dockerfile: Dockerfile
     container_name: ulpf-worker
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf
       REDIS_URL: redis://redis:6379/0

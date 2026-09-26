@@ -412,3 +412,64 @@ def dispatch_enrichment_async(event_ids: list[str]) -> None:
             count=len(event_ids),
             error=str(e)[:200],
         )
+
+def dispatch_after_commit(db: Session, event_ids: list[str]) -> None:
+    """Post-commit fan-out: publish to the SSE bus, then dispatch enrichment.
+
+    HARD INVARIANT: call this AFTER db.commit(). Same rule as
+    dispatch_enrichment_async — the SSE subscriber and the enrichment worker
+    both query the DB by event_id, and neither sees the row if the
+    transaction has not committed.
+
+    Never raises. Both steps are best-effort.
+    """
+    if not event_ids:
+        return
+
+    # 1) Publish to the SSE bus. Read the CanonicalEvent row to build the
+    #    same shape as /events uses (so the frontend renders identically).
+    try:
+        from app.services.event_bus import publish_event
+        for eid in event_ids:
+            try:
+                row = (
+                    db.query(CanonicalEvent)
+                    .filter(CanonicalEvent.event_id == eid)
+                    .first()
+                )
+                if row is None:
+                    continue
+                publish_event(eid, _sse_payload(row))
+            except Exception as e:
+                log.warning("sse.publish_failed event_id=%s error=%s", eid, e)
+    except Exception as e:
+        log.warning("sse.bus_unavailable error=%s", e)
+
+    # 2) Enrichment dispatch — existing behavior, unchanged.
+    dispatch_enrichment_async(event_ids)
+
+
+def _sse_payload(c: CanonicalEvent) -> dict:
+    """Same shape as EventListItem in app.schemas.event, so the frontend
+    reuses its existing render path."""
+    threat_context = c.threat_context if isinstance(c.threat_context, dict) else None
+    return {
+        "event_id": c.event_id,
+        "timestamp": c.timestamp.isoformat() if c.timestamp else None,
+        "event_type": c.event_type or "unknown",
+        "category": c.category or "unknown",
+        "severity": c.severity or "INFO",
+        "source_ip": c.source_ip,
+        "destination_ip": c.destination_ip,
+        "user_name": c.user_name,
+        "vendor": c.vendor,
+        "product": c.product,
+        "message": (c.message or "")[:300],
+        "risk_score": c.risk_score,
+        "threat_malicious": bool(threat_context.get("malicious", False)) if threat_context else False,
+        "threat_context": threat_context,
+        "processing_status": "PROCESSED",   # CSE exists, so pipeline succeeded
+        "detected_format": (c.processing_metadata or {}).get("format"),
+        "source_type": None,                # not on CSE; frontend tolerates null
+        "parser_id": (c.processing_metadata or {}).get("parser_id"),
+    }

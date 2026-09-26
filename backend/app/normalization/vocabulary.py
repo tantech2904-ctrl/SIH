@@ -148,6 +148,43 @@ SEMANTIC_ALIASES: dict[str, str] = {
     "md5": "extensions.file_hash", "sha1": "extensions.file_hash", "sha256": "extensions.file_hash",
     "hash": "extensions.file_hash", "filehash": "extensions.file_hash",
     "cve": "extensions.cve", "vuln": "extensions.cve", "vuln_id": "extensions.cve",
+    # journald (Linux) — normalize_alias_key lowercases and strips non-alnum,
+    # so these are the keys lookup_alias() actually sees.
+    "_hostname": "device",
+    "syslog_identifier": "product",
+    "syslogidentifier": "product",
+    "__realtime_timestamp": "timestamp",
+    "realtimetimestamp": "timestamp",
+    "_source_realtime_timestamp": "timestamp",
+    "sourcerealtimetimestamp": "timestamp",
+
+    # macOS Unified Log
+    "eventmessage": "message",
+    "subsystem": "product",
+    "eventtype": "event_type",
+        # --- Windows Event Log (EventData field names) ---
+    # normalize_alias_key() lowercases and strips non-alnum, so "TargetUserName"
+    # in the XML is looked up as "targetusername".
+    "targetusername": "user.name",
+    "subjectusername": "user.name",
+    "subjectusersid": "user.name",
+    "ipaddress": "source.ip",
+    "clientaddress": "source.ip",
+    "workstationname": "source.hostname",
+    "workstation": "source.hostname",
+    "destinationip": "destination.ip",
+    "destaddress": "destination.ip",
+    "sourceport": "source.port",
+    "destinationport": "destination.port",
+    "timecreated": "timestamp",
+    "systemtime": "timestamp",
+    "logontype": "extensions.logon_type",
+    "processname": "extensions.process_name",
+    "processid": "extensions.process_id",
+    "newprocessname": "extensions.process_name",
+    "commandline": "extensions.command_line",
+    "parentprocessname": "extensions.parent_process_name",
+    "servicename": "product",
 }
 
 

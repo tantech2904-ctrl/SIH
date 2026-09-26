@@ -15,7 +15,7 @@ from app.services.audit_service import record_audit
 from app.services.replay_service import replay_event
 from app.storage.minio_store import get_object_store
 from app.services.integrity_service import _key_from_location
-from app.services.ingest_service import dispatch_enrichment_async
+from app.services.ingest_service import dispatch_after_commit
 
 router = APIRouter()
 
@@ -185,7 +185,7 @@ def replay_quarantine(
                  resource_id=quarantine_id, new_state={"result": run.result, "status": run.new_status})
     db.commit()
     if run.result == "SUCCESS":
-        dispatch_enrichment_async([ev.event_id])
+        dispatch_after_commit(db, [ev.event_id])
     return {"replay_id": run.replay_id, "result": run.result, "new_status": run.new_status, "error": run.error}
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings, reload_settings
+from app.core.config import settings, reload_settings, Settings
 from app.core.logging import get_logger
 from app.services.audit_service import record_audit
 from app.settings.editable import (
@@ -148,10 +148,41 @@ def update_settings(
             "requires_restart": [],
             "restart_required": False,
         }
+    # Pre-write validation: build a candidate Settings object with the new
+    # values merged over the current singleton. If validation fails, reject
+    # the whole batch — never write a bad value to disk.
+    candidate = {k: getattr(settings, k) for k in settings.model_fields}
+    for k, v in accepted.items():
+        spec = settings.model_fields.get(k)
+        if spec is None:
+            continue
+        ann = spec.annotation
+        try:
+            if ann is int or ann == "int":
+                candidate[k] = int(v)
+            elif ann is float or ann == "float":
+                candidate[k] = float(v)
+            elif ann is bool or ann == "bool":
+                candidate[k] = str(v).strip().lower() in ("true", "1", "yes", "on")
+            else:
+                candidate[k] = v
+        except Exception:
+            candidate[k] = v  # let Settings() raise if it's truly invalid
 
+    try:
+        Settings(**candidate)
+    except Exception as e:
+        return {
+            "updated": [],
+            "rejected": [{"key": "<batch>", "reason": f"validation failed: {e}"}],
+            "requires_restart": [],
+            "restart_required": False,
+        }
+    
     # Capture previous state for the audit entry
     previous = _read_current_values()
     previous_snapshot = {k: previous.get(k, "") for k in accepted}
+
 
     update_env_file(_active_env_path(), accepted)
 
