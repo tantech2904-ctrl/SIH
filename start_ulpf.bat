@@ -8,21 +8,17 @@ chcp 65001 >nul 2>&1
 ::  ULPF - Universal Log Pre-Processing Framework
 ::  Fully automatic setup + control console.
 ::
-::  Just double-click this file. It will:
-::    1. Request Administrator (UAC prompt - accept it)
-::    2. Ask which mode to run in (Docker / Local)
-::    3. Validate prerequisites for that mode
-::    4. Prepare and validate .env
-::    5. Install & start the host log connector service
-::    6. Prepare the database, start services
-::    7. Open the browser
-::    8. Stay open as a control console (type q to quit)
+::  Robustness features:
+::    - Adaptive readiness: only requires frontend + backend to
+::      respond. Login and Redis are tolerated as non-blocking.
+::    - Auto-recovery: retries restarting the backend if it does
+::      not become healthy within the first 60 seconds.
+::    - Auto-fix Redis: if Redis is unreachable in local mode, it
+::      writes REDIS_URL=memory:// to .env and restarts backend.
+::    - Diagnostic on timeout: prints endpoint results and tail
+::      of install.log so failures are debuggable.
 ::
-::  Supported Python: 3.10, 3.11, 3.12.
-::  If multiple versions are installed, the newest supported
-::  one is picked automatically via the py launcher.
-::
-::  If this file fails, run cleanup_ulpf.bat to reset everything.
+::  If something is fundamentally broken, run cleanup_ulpf.bat.
 :: ============================================================
 
 :: ============================================================
@@ -89,6 +85,7 @@ set "CONNECTOR_STATE=unknown"
 set "SVC_LINE="
 set "SVC_RC="
 set "SVC_CACHE_TS=0"
+set "BACKEND_RETRIES=0"
 
 :: ============================================================
 :: HEADER
@@ -568,11 +565,10 @@ if errorlevel 1 goto LOCAL_DB_FAILED
 call :install_frontend_deps
 if errorlevel 1 goto LOCAL_NPM_FAILED
 
-echo          Starting backend window...
-start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+:: Auto-fix Redis for local mode: prefer memory:// when no local Redis
+call :autofix_redis_local
 
-echo          Starting frontend window...
-start "ULPF Frontend" cmd /k "cd /d ""!REPO_ROOT!\frontend"" && npm run dev"
+call :spawn_local_windows
 
 call :log "Spawned backend and frontend windows"
 call :write_marker
@@ -620,6 +616,58 @@ echo          Check %INSTALL_LOG% for details.
 call :log "FATAL: npm install failed"
 pause
 exit /b 1
+
+:: ------------------------------------------------------------
+:: :spawn_local_windows
+:: ------------------------------------------------------------
+:spawn_local_windows
+echo          Starting backend window...
+start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+
+echo          Starting frontend window...
+start "ULPF Frontend" cmd /k "cd /d ""!REPO_ROOT!\frontend"" && npm run dev"
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :autofix_redis_local
+::
+:: If REDIS_URL is not memory:// and no Redis is reachable on
+:: localhost:6379, patch .env to use memory:// so the backend
+:: does not waste 30+ seconds waiting for a timeout on every
+:: request. This is local-mode-only.
+:: ------------------------------------------------------------
+:autofix_redis_local
+set "REDIS_URL="
+set "REDIS_TMP=%TEMP%\ulpf_redisurl.txt"
+if exist "!REDIS_TMP!" del "!REDIS_TMP!" >nul 2>&1
+
+powershell -NoProfile -Command ^
+    "$line = Get-Content -LiteralPath '!REPO_ROOT!\.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match 'REDIS_URL' } | Select-Object -First 1; if ($line) { ($line -split '=',2)[1].Trim() | Set-Content -LiteralPath '!REDIS_TMP!' -NoNewline -Encoding ascii }"
+
+if exist "!REDIS_TMP!" (
+    set /p "REDIS_URL="<"!REDIS_TMP!"
+    del "!REDIS_TMP!" >nul 2>&1
+)
+if defined REDIS_URL set "REDIS_URL=!REDIS_URL:"=!"
+
+if "!REDIS_URL!"=="" goto AUTOFIX_REDIS_DONE
+if /i "!REDIS_URL!"=="memory://" goto AUTOFIX_REDIS_DONE
+
+:: Is a local Redis reachable?
+powershell -NoProfile -Command ^
+    "try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('localhost',6379); $c.Close(); exit 0 } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 goto AUTOFIX_REDIS_DONE
+
+echo          [!!] No local Redis detected - switching to memory:// for local mode.
+call :log "Local mode: no Redis, switching to memory://"
+
+powershell -NoProfile -Command ^
+    "$p = '!REPO_ROOT!\.env'; $c = Get-Content -LiteralPath $p; $c = $c -notmatch '^REDIS_URL='; $c += 'REDIS_URL=memory://'; Set-Content -LiteralPath $p -Value $c -Encoding UTF8"
+
+echo          [OK] .env updated: REDIS_URL=memory://
+
+:AUTOFIX_REDIS_DONE
+exit /b 0
 
 :: ------------------------------------------------------------
 :: :create_venv
@@ -706,11 +754,6 @@ exit /b 1
 
 :: ------------------------------------------------------------
 :: :bootstrap_local_db
-::
-:: Reads DATABASE_URL from .env (via a temp file so quoting is
-:: not an issue), then:
-::   sqlite://   -> create_all() + init_db()
-::   postgresql  -> alembic upgrade head
 :: ------------------------------------------------------------
 :bootstrap_local_db
 echo          Preparing database schema...
@@ -722,7 +765,6 @@ set "DB_URL="
 set "DB_TMP=%TEMP%\ulpf_dburl.txt"
 if exist "!DB_TMP!" del "!DB_TMP!" >nul 2>&1
 
-:: Extract DATABASE_URL value to a temp file.
 powershell -NoProfile -Command ^
     "$line = Get-Content -LiteralPath '!REPO_ROOT!\.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match 'DATABASE_URL' } | Select-Object -First 1; if ($line) { ($line -split '=',2)[1].Trim() | Set-Content -LiteralPath '!DB_TMP!' -NoNewline -Encoding ascii }"
 
@@ -730,7 +772,6 @@ if exist "!DB_TMP!" (
     set /p "DB_URL="<"!DB_TMP!"
     del "!DB_TMP!" >nul 2>&1
 )
-
 if defined DB_URL set "DB_URL=!DB_URL:"=!"
 
 if "!DB_URL!"=="" goto DB_DEFAULT_SQLITE
@@ -850,31 +891,52 @@ call :log "FATAL: npm install failed rc=!RC!"
 exit /b 1
 
 :: ============================================================
-:: WAIT FOR READY
+:: WAIT FOR READY - ADAPTIVE
+::
+:: Only requires:
+::   1. Frontend responds on http://localhost:5173
+::   2. Backend health endpoint responds with HTTP 200
+::
+:: Does NOT require:
+::   - Redis to be up          (reported as "ready": false is OK)
+::   - Login endpoint to pass  (PS 5.1 quirk made this unreliable)
+::
+:: Fallback chain per tick:
+::   1. Try /api/v1/health/ready - success if HTTP 200
+::   2. Fall back to /api/v1/health - success if HTTP 200
+::   3. Fall back to TCP probe on 127.0.0.1:8000 - success if
+::      connection succeeds
+::
+:: Auto-recovery:
+::   - At TICKS=30 (~60s), if backend is not responding, kill and
+::     respawn the backend window once. At TICKS=60 (~120s), try
+::     once more. After that, just keep waiting.
 :: ============================================================
 :WAIT_FOR_READY
 color 0B
 set /a TICKS=0
 set /a MAX_TICKS=150
+set /a BACKEND_RETRIES=0
 
 :WAIT_LOOP
 set /a TICKS+=1
 
 if !TICKS! GTR %MAX_TICKS% goto WAIT_TIMEOUT
 
+:: --- Auto-recovery check ---
+if !TICKS!==30 call :try_backend_recovery
+if !TICKS!==60 call :try_backend_recovery
+
 set "READY=0"
 
+:: --- Frontend check ---
 powershell -NoProfile -Command ^
     "try { Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto WAIT_DRAW
 
-powershell -NoProfile -Command ^
-    "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
-if errorlevel 1 goto WAIT_DRAW
-
-powershell -NoProfile -Command ^
-    "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/auth/login' -Method POST -UseBasicParsing -TimeoutSec 2 -Body '{}' -ContentType 'application/json' | Out-Null; exit 0 } catch { $s=[int]$_.Exception.Response.StatusCode.value__; if ($s -eq 401 -or $s -eq 422) { exit 0 } else { exit 1 } }" >nul 2>&1
-if errorlevel 1 goto WAIT_DRAW
+:: --- Backend check (3-level fallback) ---
+call :probe_backend
+if not "!BACKEND_UP!"=="1" goto WAIT_DRAW
 
 set "READY=1"
 
@@ -893,26 +955,112 @@ if "!READY!"=="1" goto ENTER_CONTROL_LOOP
 timeout /t 2 /nobreak >nul
 goto WAIT_LOOP
 
+:: ------------------------------------------------------------
+:: :probe_backend
+:: Sets BACKEND_UP=1 if any of the three probes succeed.
+:: ------------------------------------------------------------
+:probe_backend
+set "BACKEND_UP=0"
+
+:: Probe 1 - health/ready
+powershell -NoProfile -Command ^
+    "try { $r = Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 set "BACKEND_UP=1" & exit /b 0
+
+:: Probe 2 - plain /health
+powershell -NoProfile -Command ^
+    "try { $r = Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 set "BACKEND_UP=1" & exit /b 0
+
+:: Probe 3 - TCP port 8000 open
+powershell -NoProfile -Command ^
+    "try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('127.0.0.1',8000); $c.Close(); exit 0 } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 set "BACKEND_UP=1" & exit /b 0
+
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :try_backend_recovery
+:: Kills stray python processes from prior runs, respawns the
+:: backend window. Only runs in local mode. Gives up after 2 tries.
+:: ------------------------------------------------------------
+:try_backend_recovery
+if not "!MODE!"=="local" exit /b 0
+if !BACKEND_RETRIES! GEQ 2 exit /b 0
+
+:: Is the backend already up? Then no recovery needed.
+call :probe_backend
+if "!BACKEND_UP!"=="1" exit /b 0
+
+set /a BACKEND_RETRIES+=1
+call :log "Backend recovery attempt !BACKEND_RETRIES!"
+
+color 0E
+echo.
+echo          [!!] Backend not responding yet - restarting it (attempt !BACKEND_RETRIES! of 2).
+color 0B
+
+:: Kill only OUR windows
+taskkill /FI "WINDOWTITLE eq ULPF Backend*" /T /F >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+:: Respawn backend only
+start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+
+call :log "Backend respawned"
+exit /b 0
+
+:: ------------------------------------------------------------
+:: :WAIT_TIMEOUT - diagnostic on failure
+:: ------------------------------------------------------------
 :WAIT_TIMEOUT
 color 0E
 cls
 call :draw_banner "ULPF DID NOT BECOME READY IN TIME"
 echo.
-echo     Checked for 300 seconds. Something may be wrong.
+echo     Checked for 300 seconds. Running diagnostics...
 echo.
-echo     For Docker mode:
-echo       docker compose ps
-echo       docker compose logs backend
-echo.
-echo     For local mode, check the "ULPF Backend" window.
+
+call :diagnose_on_failure
+
 echo.
 echo     Full log: %INSTALL_LOG%
 echo.
 echo     To reset everything: run cleanup_ulpf.bat
 echo.
-pause
+echo     Press any key to close the two spawned windows and exit.
+pause >nul
 call :shutdown_now
 exit /b 1
+
+:: ------------------------------------------------------------
+:: :diagnose_on_failure
+:: ------------------------------------------------------------
+:diagnose_on_failure
+echo     --- Frontend (5173) ---
+powershell -NoProfile -Command ^
+    "try { $r = Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2; Write-Host ('    HTTP ' + $r.StatusCode) } catch { Write-Host '    NOT RESPONDING' }"
+
+echo.
+echo     --- Backend /health/ready ---
+powershell -NoProfile -Command ^
+    "try { $r = Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2; Write-Host ('    HTTP ' + $r.StatusCode); Write-Host ('    Body: ' + $r.Content.Substring(0, [Math]::Min(200, $r.Content.Length))) } catch { Write-Host '    NOT RESPONDING' }"
+
+echo.
+echo     --- Port status ---
+powershell -NoProfile -Command ^
+    "$ports = netstat -ano | Select-String ':5173|:8000'; if ($ports) { $ports | ForEach-Object { Write-Host ('    ' + $_.ToString().Trim()) } } else { Write-Host '    Neither port 5173 nor 8000 is listening.' }"
+
+echo.
+echo     --- Backend process ---
+powershell -NoProfile -Command ^
+    "$py = Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*SIH-main*' }; if ($py) { $py | ForEach-Object { Write-Host ('    PID ' + $_.Id + '  ' + $_.Path) } } else { Write-Host '    No backend python process found.' }"
+
+echo.
+echo     --- Last 20 lines of install.log ---
+powershell -NoProfile -Command ^
+    "if (Test-Path '%INSTALL_LOG%') { Get-Content '%INSTALL_LOG%' -Tail 20 | ForEach-Object { Write-Host ('    ' + $_) } } else { Write-Host '    (no log)' }"
+exit /b 0
 
 :: ============================================================
 :: CONTROL LOOP
@@ -1442,7 +1590,7 @@ echo          [OK] Images rebuilt.
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Force rebuild (mode-aware)
+:: Force rebuild
 :: ------------------------------------------------------------
 :force_rebuild
 color 0E
@@ -1648,21 +1796,11 @@ echo       l   Show the last 30 lines of backend logs.
 echo       o   Open http://localhost:5173 in your browser.
 echo       h   Show this help.
 echo       r   Restart the stack.
-echo       b   Rebuild from scratch. Docker: docker compose build.
-echo           Local: pip install + npm install + restart windows.
+echo       b   Rebuild from scratch.
 echo       c   Clear and redraw the console.
 echo       q   Stop everything and close this window.
 echo.
-echo     The host log connector runs as a Windows scheduled task,
-echo     a systemd unit, or a launchd agent. It starts at boot and
-echo     streams events to ULPF independently of this console.
-echo.
-echo     If Connector shows "not installed" or "stopped", run this
-echo     script once as Administrator (right-click the .bat file
-echo     and choose "Run as administrator") to install it.
-echo.
-echo     If something is fundamentally broken and you want to reset
-echo     everything, run cleanup_ulpf.bat.
+echo     If something is fundamentally broken, run cleanup_ulpf.bat.
 echo.
 echo     Press any key to return to the console.
 exit /b 0
@@ -1712,8 +1850,7 @@ taskkill /FI "WINDOWTITLE eq ULPF Backend*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq ULPF Frontend*" /T /F >nul 2>&1
 timeout /t 1 /nobreak >nul
 echo     Respawning...
-start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
-start "ULPF Frontend" cmd /k "cd /d ""!REPO_ROOT!\frontend"" && npm run dev"
+call :spawn_local_windows
 echo     [OK] Local windows restarted.
 
 :RESTART_DONE
