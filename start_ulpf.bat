@@ -75,7 +75,7 @@ if not exist "%ULPF_HOME%" mkdir "%ULPF_HOME%" >nul 2>&1
 set "INSTALL_LOG=%ULPF_HOME%\install.log"
 set "INSTALL_MARKER=%ULPF_HOME%\install-marker.json"
 
-:: SYSTEM-readable connector config directory (created with admin rights)
+:: SYSTEM-readable connector config directory
 set "CONNECTOR_DATA_DIR=C:\ProgramData\ULPF"
 set "CONNECTOR_CONFIG=!CONNECTOR_DATA_DIR!\connector.json"
 
@@ -304,24 +304,32 @@ exit /b 1
 
 :: ------------------------------------------------------------
 :: Validate .env has required vars; auto-fill Postgres if missing.
+::
+:: NOTE: Do NOT use a for() block with `echo %%V=ulpf>>"...\.env"`
+:: here. The trailing ".env" inside a parenthesized block combined
+:: with delayed expansion triggers cmd's locale parser bug:
+::     ". was unexpected at this time."
+:: Use explicit helper calls + PowerShell Add-Content instead.
 :: ------------------------------------------------------------
 :validate_env_critical
 set "ENV_CHANGED=0"
+set "ENV_FILE=!REPO_ROOT!\.env"
 
-for %%V in (POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB) do (
-    findstr /B /C:"%%V=" "!REPO_ROOT!\.env" >nul 2>&1
-    if errorlevel 1 (
-        echo          [!!] Missing %%V - adding default.
-        echo %%V=ulpf>>"!REPO_ROOT!\.env"
-        set "ENV_CHANGED=1"
-    )
+if not exist "!ENV_FILE!" (
+    echo          [--] .env not found, skipping validation.
+    exit /b 0
 )
 
-findstr /R /C:"^POSTGRES_PASSWORD= *$" "!REPO_ROOT!\.env" >nul 2>&1
+call :ensure_env_var "POSTGRES_USER"
+call :ensure_env_var "POSTGRES_PASSWORD"
+call :ensure_env_var "POSTGRES_DB"
+
+:: Catch empty POSTGRES_PASSWORD (line exists but value is blank)
+findstr /R /C:"^POSTGRES_PASSWORD= *$" "!ENV_FILE!" >nul 2>&1
 if not errorlevel 1 (
     echo          [!!] POSTGRES_PASSWORD is empty - fixing.
     powershell -NoProfile -Command ^
-        "(Get-Content -Raw '!REPO_ROOT!\.env') -replace 'POSTGRES_PASSWORD=\s*\r?\n','POSTGRES_PASSWORD=ulpf`n' | Set-Content -NoNewline '!REPO_ROOT!\.env'"
+        "$p='!ENV_FILE!'; $c=Get-Content -Raw -LiteralPath $p; $c=$c -replace 'POSTGRES_PASSWORD=\s*\r?\n','POSTGRES_PASSWORD=ulpf`r`n'; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
     set "ENV_CHANGED=1"
 )
 
@@ -329,6 +337,17 @@ if "!ENV_CHANGED!"=="1" (
     echo          [OK] .env patched with required values.
     call :log ".env auto-patched with missing POSTGRES_* vars"
 )
+exit /b 0
+
+:: Helper: add VAR=ulpf if not present.
+:: Uses PowerShell Add-Content to avoid cmd redirect parse bugs.
+:ensure_env_var
+set "VARNAME=%~1"
+findstr /B /C:"!VARNAME!=" "!ENV_FILE!" >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo          [!!] Missing !VARNAME! - adding default.
+powershell -NoProfile -Command "Add-Content -LiteralPath '!ENV_FILE!' -Value '!VARNAME!=ulpf'"
+set "ENV_CHANGED=1"
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -357,11 +376,7 @@ echo               Local mode cannot resolve those hostnames.
 echo.
 echo               Fixing .env to use localhost...
 powershell -NoProfile -Command ^
-    "$p='!REPO_ROOT!\.env'; $c=Get-Content -Raw -LiteralPath $p; " ^
-    "$c=$c -replace '@postgres:','@localhost:'; " ^
-    "$c=$c -replace '@redis:','@localhost:'; " ^
-    "$c=$c -replace 'MINIO_ENDPOINT=minio:','MINIO_ENDPOINT=localhost:'; " ^
-    "Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
+    "$p='!REPO_ROOT!\.env'; $c=Get-Content -Raw -LiteralPath $p; $c=$c -replace '@postgres:','@localhost:'; $c=$c -replace '@redis:','@localhost:'; $c=$c -replace 'MINIO_ENDPOINT=minio:','MINIO_ENDPOINT=localhost:'; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
 echo          [OK] .env patched for local mode.
 call :log "Local-mode .env had Docker hostnames; patched to localhost"
 color 0B
@@ -390,7 +405,7 @@ if "!MIG_BAD!"=="1" (
     echo   ------------------------------------------------------------
     echo     WARNING: 0001_initial.py uses unguarded create_all().
     echo     This causes DuplicateTable errors on restart. Wrap it in
-    echo     an existence check (see the fixed version in the repo).
+    echo     an existence check.
     echo   ------------------------------------------------------------
     color 0B
     call :log "WARN: 0001_initial.py still has unguarded create_all()"
@@ -504,7 +519,6 @@ exit /b 1
 :START_LOCAL
 call :log "Starting local stack"
 
-:: --- Sanity check: launcher must be present ---
 if "!PY_LAUNCHER!"=="" (
     color 0C
     echo          ERROR: No supported Python launcher detected.
@@ -513,9 +527,8 @@ if "!PY_LAUNCHER!"=="" (
     exit /b 1
 )
 echo          Using Python: !PY_LAUNCHER!
+echo          Repo root:    !REPO_ROOT!
 
-:: --- Debug: show what we're about to operate on ---
-echo          Repo root: !REPO_ROOT!
 if not exist "!REPO_ROOT!\backend\requirements.txt" (
     color 0C
     echo          ERROR: backend\requirements.txt not found.
@@ -524,7 +537,6 @@ if not exist "!REPO_ROOT!\backend\requirements.txt" (
     exit /b 1
 )
 
-:: --- Create venv if missing ---
 if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto LOCAL_NEED_VENV
 goto LOCAL_VENV_READY
 
@@ -541,15 +553,12 @@ if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" (
     exit /b 1
 )
 
-:: --- Install backend deps ---
 call :install_backend_deps
 if errorlevel 1 goto LOCAL_PIP_FAILED
 
-:: --- Install frontend deps ---
 call :install_frontend_deps
 if errorlevel 1 goto LOCAL_NPM_FAILED
 
-:: --- Spawn windows ---
 echo          Starting backend window...
 start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 
@@ -593,13 +602,11 @@ exit /b 1
 :create_venv
 echo          Creating Python virtual environment with !PY_LAUNCHER!...
 
-:: Remove any partial venv from a previous failed run
 if exist "!REPO_ROOT!\backend\venv" (
     echo          Removing stale venv directory...
     rmdir /s /q "!REPO_ROOT!\backend\venv" >nul 2>&1
 )
 
-:: Create venv using absolute path
 !PY_LAUNCHER! -m venv "!REPO_ROOT!\backend\venv"
 set "RC=!ERRORLEVEL!"
 
@@ -910,7 +917,6 @@ exit /b 0
 set "PY_LAUNCHER="
 set "PY_VER="
 
-:: 1. Try the py launcher, newest supported first
 for %%V in (3.12 3.11 3.10) do (
     if "!PY_LAUNCHER!"=="" (
         py -%%V --version >nul 2>&1
@@ -918,13 +924,11 @@ for %%V in (3.12 3.11 3.10) do (
     )
 )
 
-:: 2. Try "python" on PATH
 if "!PY_LAUNCHER!"=="" (
     python --version >nul 2>&1
     if not errorlevel 1 call :probe_py "python"
 )
 
-:: 3. Try "python3" on PATH
 if "!PY_LAUNCHER!"=="" (
     python3 --version >nul 2>&1
     if not errorlevel 1 call :probe_py "python3"
