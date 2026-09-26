@@ -8,25 +8,20 @@ chcp 65001 >nul 2>&1
 ::  ULPF - Universal Log Pre-Processing Framework
 ::  Fully automatic setup + control console.
 ::
-::  Just double-click this file. It will:
-::    1. Request Administrator (UAC prompt - accept it)
-::    2. Ask which mode to run in (Docker / Local)
-::    3. Validate prerequisites for that mode
-::    4. Prepare and validate .env
-::    5. Install & start the host log connector service
-::    6. Start the stack
-::    7. Open the browser
-::    8. Stay open as a control console (type q to quit)
+::  Rules enforced in this file to avoid the cmd parser bug
+::  ". was unexpected at this time.":
 ::
-::  Supported Python: 3.10, 3.11, 3.12 only.
-::  If multiple versions are installed, the newest supported one
-::  is picked automatically via the py launcher.
+::   1. No "for %%V in (a.b c.d)" lists with dots inside.
+::   2. No "for /f ... delims=." constructs inside parentheses.
+::   3. No "echo." inside a parenthesized block -> use "echo("
+::   4. No line where "." touches ")" from inside a block.
+::   5. Heavy lifting that touches .env is done via PowerShell.
 ::
 ::  Safe to re-run. Idempotent.
 :: ============================================================
 
 :: ============================================================
-:: ELEVATION  (cmd-only redirects — do NOT invoke PowerShell here)
+:: ELEVATION  (cmd-only redirects — no PowerShell before this)
 :: ============================================================
 net session >nul 2>&1
 if errorlevel 1 goto ELEVATE
@@ -75,7 +70,6 @@ if not exist "%ULPF_HOME%" mkdir "%ULPF_HOME%" >nul 2>&1
 set "INSTALL_LOG=%ULPF_HOME%\install.log"
 set "INSTALL_MARKER=%ULPF_HOME%\install-marker.json"
 
-:: SYSTEM-readable connector config directory
 set "CONNECTOR_DATA_DIR=C:\ProgramData\ULPF"
 set "CONNECTOR_CONFIG=!CONNECTOR_DATA_DIR!\connector.json"
 
@@ -111,13 +105,14 @@ if exist "%INSTALL_MARKER%" set "FIRST_RUN=false"
 :: STEP 1 - MODE SELECTION
 :: ============================================================
 :STEP_MODE
-if not "!ARG_MODE!"=="" (
-    set "CHOICE=!ARG_MODE!"
-    goto MODE_RESOLVE
-)
+if not "!ARG_MODE!"=="" goto MODE_AUTO
 
 call :draw_mode_menu
 set /p "CHOICE=          Enter choice [1/2/3]: "
+goto MODE_RESOLVE
+
+:MODE_AUTO
+set "CHOICE=!ARG_MODE!"
 
 :MODE_RESOLVE
 if "!CHOICE!"=="1" goto MODE_TRY_DOCKER
@@ -148,7 +143,7 @@ call :log "Mode selected: local"
 goto MODE_VALIDATE_LOCAL
 
 :: ------------------------------------------------------------
-:: Mode validation — Docker
+:: Mode validation - Docker
 :: ------------------------------------------------------------
 :MODE_VALIDATE_DOCKER
 call :draw_step 1 "Validating Docker mode"
@@ -183,7 +178,7 @@ pause
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Mode validation — Local
+:: Mode validation - Local
 :: ------------------------------------------------------------
 :MODE_VALIDATE_LOCAL
 call :draw_step 1 "Validating local mode"
@@ -265,7 +260,14 @@ exit /b 0
 :maybe_backup_env
 if not "!ARG_RESET_ENV!"=="1" exit /b 0
 if not exist "!REPO_ROOT!\.env" exit /b 0
-for /f "tokens=1-6 delims=/:. " %%a in ("%DATE% %TIME%") do set "TS=%%c-%%a-%%b-%%d-%%e-%%f"
+call :backup_env_with_timestamp
+exit /b 0
+
+:backup_env_with_timestamp
+:: Get a safe timestamp via PowerShell to avoid cmd date parsing quirks
+set "TS="
+for /f "usebackq tokens=*" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'yyyy-MM-dd-HHmmss'"`) do set "TS=%%T"
+if "!TS!"=="" set "TS=backup"
 move /Y "!REPO_ROOT!\.env" "!REPO_ROOT!\.env.bak.!TS!" >nul
 echo          Backed up existing .env to .env.bak.!TS! ^(--reset-env^)
 call :log "Backed up .env (reset-env)"
@@ -303,44 +305,37 @@ pause
 exit /b 1
 
 :: ------------------------------------------------------------
-:: Validate .env has required vars; auto-fill Postgres if missing.
+:: Validate .env critical vars
 ::
-:: NOTE: Do NOT use a for() block with `echo %%V=ulpf>>"...\.env"`
-:: here. The trailing ".env" inside a parenthesized block combined
-:: with delayed expansion triggers cmd's locale parser bug:
-::     ". was unexpected at this time."
-:: Use explicit helper calls + PowerShell Add-Content instead.
+:: This routine used to contain a `for %%V in (...)` list with
+:: `echo %%V=ulpf>>"!REPO_ROOT!\.env"` inside. That construct
+:: crashes cmd on some locales with ". was unexpected at this
+:: time." because the parser pre-scans the block, sees the
+:: trailing ".env" and aborts. We now use three explicit calls
+:: to :ensure_env_var, which does the file edit via PowerShell.
 :: ------------------------------------------------------------
 :validate_env_critical
 set "ENV_CHANGED=0"
 set "ENV_FILE=!REPO_ROOT!\.env"
 
-if not exist "!ENV_FILE!" (
-    echo          [--] .env not found, skipping validation.
-    exit /b 0
-)
+if not exist "!ENV_FILE!" goto VALIDATE_ENV_SKIP
 
 call :ensure_env_var "POSTGRES_USER"
 call :ensure_env_var "POSTGRES_PASSWORD"
 call :ensure_env_var "POSTGRES_DB"
 
-:: Catch empty POSTGRES_PASSWORD (line exists but value is blank)
-findstr /R /C:"^POSTGRES_PASSWORD= *$" "!ENV_FILE!" >nul 2>&1
-if not errorlevel 1 (
-    echo          [!!] POSTGRES_PASSWORD is empty - fixing.
-    powershell -NoProfile -Command ^
-        "$p='!ENV_FILE!'; $c=Get-Content -Raw -LiteralPath $p; $c=$c -replace 'POSTGRES_PASSWORD=\s*\r?\n','POSTGRES_PASSWORD=ulpf`r`n'; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
-    set "ENV_CHANGED=1"
-)
+call :fix_empty_postgres_password
 
 if "!ENV_CHANGED!"=="1" (
     echo          [OK] .env patched with required values.
-    call :log ".env auto-patched with missing POSTGRES_* vars"
+    call :log ".env auto-patched with missing POSTGRES_ vars"
 )
 exit /b 0
 
-:: Helper: add VAR=ulpf if not present.
-:: Uses PowerShell Add-Content to avoid cmd redirect parse bugs.
+:VALIDATE_ENV_SKIP
+echo          [--] .env not found, skipping validation.
+exit /b 0
+
 :ensure_env_var
 set "VARNAME=%~1"
 findstr /B /C:"!VARNAME!=" "!ENV_FILE!" >nul 2>&1
@@ -350,8 +345,17 @@ powershell -NoProfile -Command "Add-Content -LiteralPath '!ENV_FILE!' -Value '!V
 set "ENV_CHANGED=1"
 exit /b 0
 
+:fix_empty_postgres_password
+findstr /R /C:"^POSTGRES_PASSWORD= *$" "!ENV_FILE!" >nul 2>&1
+if errorlevel 1 exit /b 0
+echo          [!!] POSTGRES_PASSWORD is empty - fixing.
+powershell -NoProfile -Command ^
+    "$p = '!ENV_FILE!'; $c = Get-Content -Raw -LiteralPath $p; $c = $c -replace 'POSTGRES_PASSWORD=\s*\r?\n','POSTGRES_PASSWORD=ulpf' + [Environment]::NewLine; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
+set "ENV_CHANGED=1"
+exit /b 0
+
 :: ------------------------------------------------------------
-:: Validate .env matches the chosen mode.
+:: Validate .env matches the chosen mode
 :: ------------------------------------------------------------
 :validate_env_for_mode
 if "!MODE!"=="docker" goto VALIDATE_MODE_DOCKER
@@ -376,7 +380,7 @@ echo               Local mode cannot resolve those hostnames.
 echo.
 echo               Fixing .env to use localhost...
 powershell -NoProfile -Command ^
-    "$p='!REPO_ROOT!\.env'; $c=Get-Content -Raw -LiteralPath $p; $c=$c -replace '@postgres:','@localhost:'; $c=$c -replace '@redis:','@localhost:'; $c=$c -replace 'MINIO_ENDPOINT=minio:','MINIO_ENDPOINT=localhost:'; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
+    "$p = '!REPO_ROOT!\.env'; $c = Get-Content -Raw -LiteralPath $p; $c = $c -replace '@postgres:','@localhost:'; $c = $c -replace '@redis:','@localhost:'; $c = $c -replace 'MINIO_ENDPOINT=minio:','MINIO_ENDPOINT=localhost:'; Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
 echo          [OK] .env patched for local mode.
 call :log "Local-mode .env had Docker hostnames; patched to localhost"
 color 0B
@@ -386,7 +390,7 @@ exit /b 0
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Validate migrations don't contain unguarded create_all().
+:: Validate migrations don't contain unguarded create_all()
 :: ------------------------------------------------------------
 :validate_migrations
 set "MIG_BAD=0"
@@ -394,22 +398,27 @@ set "MIG_BAD=0"
 if not exist "!REPO_ROOT!\backend\alembic\versions\0001_initial.py" exit /b 0
 
 findstr /C:"insp.get_table_names" "!REPO_ROOT!\backend\alembic\versions\0001_initial.py" >nul 2>&1
-if errorlevel 1 (
-    findstr /C:"Base.metadata.create_all" "!REPO_ROOT!\backend\alembic\versions\0001_initial.py" >nul 2>&1
-    if not errorlevel 1 set "MIG_BAD=1"
-)
+if not errorlevel 1 goto VALIDATE_MIGRATIONS_OK
 
-if "!MIG_BAD!"=="1" (
-    color 0E
-    echo.
-    echo   ------------------------------------------------------------
-    echo     WARNING: 0001_initial.py uses unguarded create_all().
-    echo     This causes DuplicateTable errors on restart. Wrap it in
-    echo     an existence check.
-    echo   ------------------------------------------------------------
-    color 0B
-    call :log "WARN: 0001_initial.py still has unguarded create_all()"
-)
+findstr /C:"Base.metadata.create_all" "!REPO_ROOT!\backend\alembic\versions\0001_initial.py" >nul 2>&1
+if errorlevel 1 goto VALIDATE_MIGRATIONS_OK
+
+set "MIG_BAD=1"
+
+:VALIDATE_MIGRATIONS_OK
+if "!MIG_BAD!"=="1" call :show_migration_warning
+exit /b 0
+
+:show_migration_warning
+color 0E
+echo.
+echo   ------------------------------------------------------------
+echo     WARNING: 0001_initial.py uses unguarded create_all()
+echo     This causes DuplicateTable errors on restart. Wrap it
+echo     in an existence check.
+echo   ------------------------------------------------------------
+color 0B
+call :log "WARN: 0001_initial.py still has unguarded create_all()"
 exit /b 0
 
 :: ============================================================
@@ -519,39 +528,36 @@ exit /b 1
 :START_LOCAL
 call :log "Starting local stack"
 
-if "!PY_LAUNCHER!"=="" (
-    color 0C
-    echo          ERROR: No supported Python launcher detected.
-    call :log "FATAL: PY_LAUNCHER empty at START_LOCAL"
-    pause
-    exit /b 1
-)
+if "!PY_LAUNCHER!"=="" goto LOCAL_NO_PY_LAUNCHER
+
 echo          Using Python: !PY_LAUNCHER!
 echo          Repo root:    !REPO_ROOT!
 
-if not exist "!REPO_ROOT!\backend\requirements.txt" (
-    color 0C
-    echo          ERROR: backend\requirements.txt not found.
-    call :log "FATAL: requirements.txt missing"
-    pause
-    exit /b 1
-)
+if not exist "!REPO_ROOT!\backend\requirements.txt" goto LOCAL_NO_REQS
 
 if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto LOCAL_NEED_VENV
 goto LOCAL_VENV_READY
+
+:LOCAL_NO_PY_LAUNCHER
+color 0C
+echo          ERROR: No supported Python launcher detected.
+call :log "FATAL: PY_LAUNCHER empty at START_LOCAL"
+pause
+exit /b 1
+
+:LOCAL_NO_REQS
+color 0C
+echo          ERROR: backend\requirements.txt not found.
+call :log "FATAL: requirements.txt missing"
+pause
+exit /b 1
 
 :LOCAL_NEED_VENV
 call :create_venv
 if errorlevel 1 goto LOCAL_VENV_FAILED
 
 :LOCAL_VENV_READY
-if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" (
-    color 0C
-    echo          ERROR: backend\venv\Scripts\python.exe not found after venv step.
-    call :log "FATAL: venv python missing"
-    pause
-    exit /b 1
-)
+if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto LOCAL_VENV_MISSING
 
 call :install_backend_deps
 if errorlevel 1 goto LOCAL_PIP_FAILED
@@ -568,6 +574,13 @@ start "ULPF Frontend" cmd /k "cd /d ""!REPO_ROOT!\frontend"" && npm run dev"
 call :log "Spawned backend and frontend windows"
 call :write_marker
 goto WAIT_FOR_READY
+
+:LOCAL_VENV_MISSING
+color 0C
+echo          ERROR: backend\venv\Scripts\python.exe not found after venv step.
+call :log "FATAL: venv python missing"
+pause
+exit /b 1
 
 :LOCAL_VENV_FAILED
 color 0C
@@ -597,7 +610,7 @@ pause
 exit /b 1
 
 :: ------------------------------------------------------------
-:: :create_venv — absolute paths only, no pushd
+:: :create_venv - absolute paths only, no pushd
 :: ------------------------------------------------------------
 :create_venv
 echo          Creating Python virtual environment with !PY_LAUNCHER!...
@@ -610,17 +623,8 @@ if exist "!REPO_ROOT!\backend\venv" (
 !PY_LAUNCHER! -m venv "!REPO_ROOT!\backend\venv"
 set "RC=!ERRORLEVEL!"
 
-if not "!RC!"=="0" (
-    echo          venv creation exited with code !RC!.
-    call :log "venv creation failed rc=!RC!"
-    goto VENV_FAILED
-)
-
-if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" (
-    echo          venv created but Scripts\python.exe missing.
-    call :log "venv created but python.exe missing"
-    goto VENV_FAILED
-)
+if not "!RC!"=="0" goto VENV_FAILED
+if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto VENV_FAILED
 
 echo          [OK] Virtual environment created.
 exit /b 0
@@ -630,58 +634,63 @@ call :log "FATAL: venv creation failed"
 exit /b 1
 
 :: ------------------------------------------------------------
-:: :install_backend_deps — absolute paths only, no pushd
+:: :install_backend_deps - absolute paths only, no pushd
 :: ------------------------------------------------------------
 :install_backend_deps
 echo          Installing core backend dependencies ^(may take a few minutes^)...
 
 set "VENV_PY=!REPO_ROOT!\backend\venv\Scripts\python.exe"
 
-if not exist "!VENV_PY!" (
-    color 0C
-    echo          ERROR: !VENV_PY! not found.
-    call :log "FATAL: venv python missing before pip install"
-    exit /b 1
-)
-
-if not exist "!REPO_ROOT!\backend\requirements.txt" (
-    color 0C
-    echo          ERROR: backend\requirements.txt not found.
-    call :log "FATAL: requirements.txt missing"
-    exit /b 1
-)
+if not exist "!VENV_PY!" goto PIP_NO_VENV_PY
+if not exist "!REPO_ROOT!\backend\requirements.txt" goto PIP_NO_REQS
 
 echo          Running: pip install -r requirements.txt
 "!VENV_PY!" -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r "!REPO_ROOT!\backend\requirements.txt" >>"%INSTALL_LOG%" 2>&1
 set "RC=!ERRORLEVEL!"
 
-if not "!RC!"=="0" (
-    color 0C
-    echo          ERROR: pip install failed with code !RC!.
-    echo          Last 20 lines of %INSTALL_LOG%:
-    echo          ------------------------------------------------
-    powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
-    echo          ------------------------------------------------
-    call :log "FATAL: pip install failed rc=!RC!"
-    exit /b 1
-)
+if not "!RC!"=="0" goto PIP_CORE_FAILED
+
 echo          [OK] Core dependencies installed.
-
 echo          Installing optional dependencies ^(may be skipped^)...
-if exist "!REPO_ROOT!\backend\requirements-optional.txt" (
-    "!VENV_PY!" -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r "!REPO_ROOT!\backend\requirements-optional.txt" >>"%INSTALL_LOG%" 2>&1
-    if errorlevel 1 (
-        color 0E
-        echo          [!!] Optional dependencies failed ^(non-fatal^).
-        call :log "WARN: optional dependencies failed"
-    ) else (
-        echo          [OK] Optional dependencies installed.
-    )
-) else (
-    echo          [--] requirements-optional.txt not present, skipping.
-)
 
+if not exist "!REPO_ROOT!\backend\requirements-optional.txt" goto PIP_OPTIONAL_SKIPPED
+
+"!VENV_PY!" -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r "!REPO_ROOT!\backend\requirements-optional.txt" >>"%INSTALL_LOG%" 2>&1
+if errorlevel 1 goto PIP_OPTIONAL_FAILED
+echo          [OK] Optional dependencies installed.
 exit /b 0
+
+:PIP_OPTIONAL_SKIPPED
+echo          [--] requirements-optional.txt not present, skipping.
+exit /b 0
+
+:PIP_OPTIONAL_FAILED
+color 0E
+echo          [!!] Optional dependencies failed ^(non-fatal^).
+call :log "WARN: optional dependencies failed"
+exit /b 0
+
+:PIP_NO_VENV_PY
+color 0C
+echo          ERROR: venv python missing.
+call :log "FATAL: venv python missing before pip install"
+exit /b 1
+
+:PIP_NO_REQS
+color 0C
+echo          ERROR: requirements.txt missing.
+call :log "FATAL: requirements.txt missing"
+exit /b 1
+
+:PIP_CORE_FAILED
+color 0C
+echo          ERROR: pip install failed with code !RC!.
+echo          Last 20 lines of %INSTALL_LOG%:
+echo          ------------------------------------------------
+powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
+echo          ------------------------------------------------
+call :log "FATAL: pip install failed rc=!RC!"
+exit /b 1
 
 :: ------------------------------------------------------------
 :: :install_frontend_deps
@@ -696,18 +705,19 @@ call npm install >>"%INSTALL_LOG%" 2>&1
 set "RC=!ERRORLEVEL!"
 popd
 
-if not "!RC!"=="0" (
-    color 0C
-    echo          ERROR: npm install failed with code !RC!.
-    echo          Last 20 lines of %INSTALL_LOG%:
-    echo          ------------------------------------------------
-    powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
-    echo          ------------------------------------------------
-    call :log "FATAL: npm install failed rc=!RC!"
-    exit /b 1
-)
+if not "!RC!"=="0" goto NPM_FAILED
 echo          [OK] Frontend dependencies installed.
 exit /b 0
+
+:NPM_FAILED
+color 0C
+echo          ERROR: npm install failed with code !RC!.
+echo          Last 20 lines of %INSTALL_LOG%:
+echo          ------------------------------------------------
+powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
+echo          ------------------------------------------------
+call :log "FATAL: npm install failed rc=!RC!"
+exit /b 1
 
 :: ============================================================
 :: WAIT FOR READY
@@ -724,11 +734,11 @@ if !TICKS! GTR %MAX_TICKS% goto WAIT_TIMEOUT
 
 set "READY=0"
 powershell -NoProfile -Command ^
-    "try { $r=Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1
+    "try { Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto WAIT_DRAW
 
 powershell -NoProfile -Command ^
-    "try { $r=Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1
+    "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto WAIT_DRAW
 set "READY=1"
 
@@ -912,23 +922,35 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: Python detection
+::
+:: Version numbers with dots are NOT put inside for(...) lists.
+:: Each candidate is checked with an explicit if.
 :: ------------------------------------------------------------
 :check_python
 set "PY_LAUNCHER="
 set "PY_VER="
 
-for %%V in (3.12 3.11 3.10) do (
-    if "!PY_LAUNCHER!"=="" (
-        py -%%V --version >nul 2>&1
-        if not errorlevel 1 call :probe_py "py -%%V"
-    )
+:: Prefer py -3.12, then py -3.11, then py -3.10
+py -3.12 --version >nul 2>&1
+if not errorlevel 1 call :probe_py "py -3.12"
+
+if "!PY_LAUNCHER!"=="" (
+    py -3.11 --version >nul 2>&1
+    if not errorlevel 1 call :probe_py "py -3.11"
 )
 
+if "!PY_LAUNCHER!"=="" (
+    py -3.10 --version >nul 2>&1
+    if not errorlevel 1 call :probe_py "py -3.10"
+)
+
+:: Fall back to plain python
 if "!PY_LAUNCHER!"=="" (
     python --version >nul 2>&1
     if not errorlevel 1 call :probe_py "python"
 )
 
+:: Fall back to python3
 if "!PY_LAUNCHER!"=="" (
     python3 --version >nul 2>&1
     if not errorlevel 1 call :probe_py "python3"
@@ -940,27 +962,31 @@ call :log "Python detected: !PY_VER! via !PY_LAUNCHER!"
 exit /b 0
 
 :probe_py
+:: Use PowerShell to determine the major.minor version cleanly.
+:: This avoids cmd's for /f with "." delimiter inside a block.
 set "CANDIDATE=%~1"
-set "VER_RAW="
-for /f "tokens=*" %%v in ('%CANDIDATE% --version 2^>nul') do set "VER_RAW=%%v"
-if "!VER_RAW!"=="" exit /b 0
-
-set "VER_NUM=!VER_RAW:Python =!"
-for /f "tokens=1,2 delims=." %%a in ("!VER_NUM!") do (
-    set "CAND_MAJOR=%%a"
-    set "CAND_MINOR=%%b"
+set "MAJOR="
+set "MINOR="
+for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "try { $v = (& '%CANDIDATE%' --version 2>$null) -replace 'Python '; $p = $v.Split('.'); Write-Output ($p[0] + ' ' + $p[1]) } catch { Write-Output '0 0' }"`) do (
+    for /f "tokens=1,2" %%a in ("%%v") do (
+        set "MAJOR=%%a"
+        set "MINOR=%%b"
+    )
 )
-for /f "tokens=1 delims= " %%m in ("!CAND_MINOR!") do set "CAND_MINOR=%%m"
 
-if not "!CAND_MAJOR!"=="3" exit /b 0
-if "!CAND_MINOR!"=="10" goto PROBE_PY_ACCEPT
-if "!CAND_MINOR!"=="11" goto PROBE_PY_ACCEPT
-if "!CAND_MINOR!"=="12" goto PROBE_PY_ACCEPT
-exit /b 0
+if not "!MAJOR!"=="3" exit /b 0
 
-:PROBE_PY_ACCEPT
+set "OK=0"
+if "!MINOR!"=="10" set "OK=1"
+if "!MINOR!"=="11" set "OK=1"
+if "!MINOR!"=="12" set "OK=1"
+if "!OK!"=="0" exit /b 0
+
+:: Fetch the full version string for display
+for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "try { (& '%CANDIDATE%' --version 2>$null) } catch { '' }"`) do set "FULL_VER=%%v"
+
 set "PY_LAUNCHER=!CANDIDATE!"
-set "PY_VER=!VER_RAW!"
+set "PY_VER=!FULL_VER!"
 exit /b 0
 
 :CHECK_PY_MISSING
@@ -1021,6 +1047,10 @@ echo          [OK] Created !CONNECTOR_CONFIG! from template.
 exit /b 0
 
 :SEED_NO_TEMPLATE
+call :write_default_connector_config
+exit /b 0
+
+:write_default_connector_config
 (
     echo {
     echo   "ulpf_base": "http://localhost:8000",
@@ -1077,7 +1107,7 @@ if not exist "!REPO_ROOT!\scripts\ulpf-connector\install_service.py" goto REFRES
 set "CONNECTOR_DIR=!REPO_ROOT!\scripts\ulpf-connector"
 if not exist "!CONNECTOR_CONFIG!" goto REFRESH_CONNECTOR_NO_CONFIG
 
-for /f "tokens=*" %%T in ('powershell -NoProfile -Command "[int][double]::Parse((Get-Date -UFormat %%s))"') do set "NOW_TS=%%T"
+for /f "usebackq tokens=*" %%T in (`powershell -NoProfile -Command "[int][double]::Parse((Get-Date -UFormat %%s))"`) do set "NOW_TS=%%T"
 set /a SINCE=!NOW_TS!-!SVC_CACHE_TS!
 if !SINCE! LSS 30 if not "!CONNECTOR_STATE!"=="unknown" exit /b 0
 
@@ -1145,6 +1175,7 @@ exit /b 0
 
 :CONNECTOR_INSTALL_VERIFY
 set /a VWAIT=0
+
 :CONNECTOR_VERIFY_LOOP
 timeout /t 2 /nobreak >nul
 set /a VWAIT+=2
@@ -1169,10 +1200,10 @@ exit /b 0
 :: ------------------------------------------------------------
 :patch_env_for_docker
 powershell -NoProfile -Command ^
-    "$p='!REPO_ROOT!\.env'; $c=Get-Content -Raw -LiteralPath $p; " ^
-    "$c=$c -replace 'DATABASE_URL=postgresql\+psycopg://ulpf:ulpf@localhost:5432/ulpf','DATABASE_URL=postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf'; " ^
-    "$c=$c -replace 'REDIS_URL=redis://localhost:6379/0','REDIS_URL=redis://redis:6379/0'; " ^
-    "$c=$c -replace 'MINIO_ENDPOINT=localhost:9000','MINIO_ENDPOINT=minio:9000'; " ^
+    "$p = '!REPO_ROOT!\.env'; $c = Get-Content -Raw -LiteralPath $p; " ^
+    "$c = $c -replace 'DATABASE_URL=postgresql\+psycopg://ulpf:ulpf@localhost:5432/ulpf','DATABASE_URL=postgresql+psycopg://ulpf:ulpf@postgres:5432/ulpf'; " ^
+    "$c = $c -replace 'REDIS_URL=redis://localhost:6379/0','REDIS_URL=redis://redis:6379/0'; " ^
+    "$c = $c -replace 'MINIO_ENDPOINT=localhost:9000','MINIO_ENDPOINT=minio:9000'; " ^
     "Set-Content -LiteralPath $p -Value $c -NoNewline -Encoding UTF8"
 if errorlevel 1 goto PATCH_ENV_WARN
 echo          [OK] .env patched for Docker networking.
@@ -1381,7 +1412,7 @@ echo.
 echo        How would you like to run ULPF?
 echo.
 echo   ------------------------------------------------------------
-echo        [1]  Docker      ^(recommended — no local installs^)
+echo        [1]  Docker      ^(recommended - no local installs^)
 echo        [2]  Local       ^(uses existing Python + Node^)
 echo        [3]  Exit
 echo   ------------------------------------------------------------
@@ -1420,7 +1451,7 @@ exit /b 0
 
 :check_health
 powershell -NoProfile -Command ^
-    "try { $r=Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1
+    "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto CHECK_HEALTH_DOWN
 set "LAST_CHECK=ok"
 exit /b 0
