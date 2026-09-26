@@ -8,17 +8,19 @@ chcp 65001 >nul 2>&1
 ::  ULPF - Universal Log Pre-Processing Framework
 ::  Fully automatic setup + control console.
 ::
-::  Rules enforced to avoid two cmd parser bugs:
+::  Just double-click this file. It will:
+::    1. Request Administrator (UAC prompt - accept it)
+::    2. Ask which mode to run in (Docker / Local)
+::    3. Validate prerequisites for that mode
+::    4. Prepare and validate .env
+::    5. Install & start the host log connector service
+::    6. Apply database migrations (local mode) / start stack
+::    7. Open the browser
+::    8. Stay open as a control console (type q to quit)
 ::
-::   BUG A: ". was unexpected at this time."
-::     Never put a "." inside a parenthesized block where it
-::     touches ")". Never use "." as a for /f delimiter inside
-::     a block. Route .env edits through PowerShell.
-::
-::   BUG B: Python 3.11 installed but bat reports 3.14.
-::     Never invoke "py -3.X" through PowerShell "&" syntax.
-::     Instead call the candidate directly and match the
-::     version string with prefix comparisons (no dot parsing).
+::  Supported Python: 3.10, 3.11, 3.12.
+::  If multiple versions are installed, the newest supported
+::  one is picked automatically via the py launcher.
 ::
 ::  Safe to re-run. Idempotent.
 :: ============================================================
@@ -560,6 +562,9 @@ if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto LOCAL_VENV_MISSI
 call :install_backend_deps
 if errorlevel 1 goto LOCAL_PIP_FAILED
 
+call :bootstrap_local_db
+if errorlevel 1 goto LOCAL_DB_FAILED
+
 call :install_frontend_deps
 if errorlevel 1 goto LOCAL_NPM_FAILED
 
@@ -598,6 +603,15 @@ call :log "FATAL: pip install failed"
 pause
 exit /b 1
 
+:LOCAL_DB_FAILED
+color 0C
+echo.
+echo          ERROR: database bootstrap failed.
+echo          Check %INSTALL_LOG% for details.
+call :log "FATAL: local db bootstrap failed"
+pause
+exit /b 1
+
 :LOCAL_NPM_FAILED
 color 0C
 echo.
@@ -608,7 +622,7 @@ pause
 exit /b 1
 
 :: ------------------------------------------------------------
-:: :create_venv - absolute paths only, no pushd
+:: :create_venv
 :: ------------------------------------------------------------
 :create_venv
 echo          Creating Python virtual environment with !PY_LAUNCHER!...
@@ -691,6 +705,113 @@ call :log "FATAL: pip install failed rc=!RC!"
 exit /b 1
 
 :: ------------------------------------------------------------
+:: :bootstrap_local_db
+::
+:: Local mode must prepare the schema BEFORE uvicorn starts.
+:: Two databases are supported:
+::
+::   sqlite://      -> run a Python snippet that calls
+::                     Base.metadata.create_all() and then
+::                     seeds the DB via app.db.init_db. Alembic
+::                     migrations are Postgres-specific and would
+::                     fail on SQLite.
+::
+::   postgresql://  -> run "alembic upgrade head", exactly like
+::                     the Docker entrypoint does.
+:: ------------------------------------------------------------
+:bootstrap_local_db
+echo          Preparing database schema...
+
+set "VENV_PY=!REPO_ROOT!\backend\venv\Scripts\python.exe"
+if not exist "!VENV_PY!" goto DB_NO_VENV_PY
+
+set "DB_URL="
+for /f "usebackq tokens=2* delims==" %%A in (`powershell -NoProfile -Command "(Select-String -Path '!REPO_ROOT!\.env' -Pattern '^DATABASE_URL=' | Select-Object -First 1).Line"`) do set "DB_URL=%%B"
+if "!DB_URL!"=="" goto DB_NO_URL
+echo          DATABASE_URL = !DB_URL!
+
+if /i "!DB_URL:~0,9!"=="sqlite://" goto DB_SQLITE
+if /i "!DB_URL:~0,14!"=="sqlite+pysqlite" goto DB_SQLITE
+goto DB_POSTGRES
+
+:DB_SQLITE
+echo          SQLite detected - bootstrapping via create_all + seed.
+
+(
+    echo import os, sys
+    echo sys.path.insert^(0, r'!REPO_ROOT!\backend'^)
+    echo from app.db.base import Base
+    echo from app.db.session import engine
+    echo from app.db import init_db as _
+    echo Base.metadata.create_all^(bind=engine^)
+    echo from app.db.init_db import init_db
+    echo init_db^(^)
+    echo print^('OK'^)
+) >"%TEMP%\ulpf_bootstrap.py"
+
+pushd "!REPO_ROOT!\backend"
+"!VENV_PY!" "%TEMP%\ulpf_bootstrap.py" >>"%INSTALL_LOG%" 2>&1
+set "RC=!ERRORLEVEL!"
+popd
+del "%TEMP%\ulpf_bootstrap.py" >nul 2>&1
+
+if not "!RC!"=="0" goto DB_BOOTSTRAP_FAILED
+echo          [OK] SQLite schema + seed data ready.
+exit /b 0
+
+:DB_POSTGRES
+echo          Postgres detected - running alembic upgrade head.
+
+if not exist "!REPO_ROOT!\backend\alembic\alembic.ini" goto DB_NO_ALEMBIC_INI
+
+pushd "!REPO_ROOT!\backend"
+"!VENV_PY!" -m alembic -c "alembic\alembic.ini" upgrade head >>"%INSTALL_LOG%" 2>&1
+set "RC=!ERRORLEVEL!"
+popd
+
+if not "!RC!"=="0" goto DB_ALEMBIC_FAILED
+echo          [OK] Database migrations applied.
+exit /b 0
+
+:DB_NO_VENV_PY
+color 0C
+echo          ERROR: venv python missing for db bootstrap.
+call :log "FATAL: db bootstrap - venv python missing"
+exit /b 1
+
+:DB_NO_URL
+color 0C
+echo          ERROR: DATABASE_URL not found in .env.
+call :log "FATAL: DATABASE_URL missing"
+exit /b 1
+
+:DB_NO_ALEMBIC_INI
+color 0C
+echo          ERROR: alembic.ini not found.
+call :log "FATAL: alembic.ini missing"
+exit /b 1
+
+:DB_BOOTSTRAP_FAILED
+color 0C
+echo          ERROR: SQLite bootstrap failed with code !RC!.
+echo          Last 25 lines of %INSTALL_LOG%:
+echo          ------------------------------------------------
+powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 25"
+echo          ------------------------------------------------
+call :log "FATAL: sqlite bootstrap failed rc=!RC!"
+exit /b 1
+
+:DB_ALEMBIC_FAILED
+color 0C
+echo          ERROR: alembic upgrade failed with code !RC!.
+echo          Last 25 lines of %INSTALL_LOG%:
+echo          ------------------------------------------------
+powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 25"
+echo          ------------------------------------------------
+call :log "FATAL: alembic upgrade failed rc=!RC!"
+exit /b 1
+
+:: ------------------------------------------------------------
 :: :install_frontend_deps
 :: ------------------------------------------------------------
 :install_frontend_deps
@@ -719,6 +840,14 @@ exit /b 1
 
 :: ============================================================
 :: WAIT FOR READY
+::
+:: Polls three endpoints:
+::   1. Frontend (Vite/nginx) - HTTP 200
+::   2. Backend /health/ready - HTTP 200
+::   3. /auth/login with empty body - expects 401/422, NOT 500
+::      A 500 means the server is up but the database schema
+::      is broken (missing table, bad migration, etc).
+::      We must not advance to the browser until this passes.
 :: ============================================================
 :WAIT_FOR_READY
 color 0B
@@ -731,6 +860,7 @@ set /a TICKS+=1
 if !TICKS! GTR %MAX_TICKS% goto WAIT_TIMEOUT
 
 set "READY=0"
+
 powershell -NoProfile -Command ^
     "try { Invoke-WebRequest -Uri 'http://localhost:5173' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto WAIT_DRAW
@@ -738,6 +868,11 @@ if errorlevel 1 goto WAIT_DRAW
 powershell -NoProfile -Command ^
     "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/health/ready' -UseBasicParsing -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 goto WAIT_DRAW
+
+powershell -NoProfile -Command ^
+    "try { Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/auth/login' -Method POST -UseBasicParsing -TimeoutSec 2 -Body '{}' -ContentType 'application/json' | Out-Null; exit 0 } catch { $s=[int]$_.Exception.Response.StatusCode.value__; if ($s -eq 401 -or $s -eq 422) { exit 0 } else { exit 1 } }" >nul 2>&1
+if errorlevel 1 goto WAIT_DRAW
+
 set "READY=1"
 
 :WAIT_DRAW
@@ -926,17 +1061,7 @@ exit /b 0
 :: Probing strategy:
 ::   1. Call each launcher DIRECTLY (never through PowerShell).
 ::   2. Capture the "Python X.Y.Z" string.
-::   3. Match with string-prefix comparisons — no dot parsing.
-::
-:: We try, in priority order:
-::   py -3.12   (launcher, prefer newest supported)
-::   py -3.11
-::   py -3.10
-::   python     (whatever PATH resolves to)
-::   python3    (POSIX-style alias)
-::
-:: Because we match on the returned version string, even if "python"
-:: resolves to 3.14, we correctly REJECT it and keep looking.
+::   3. Match with string-prefix comparisons - no dot parsing.
 :: ------------------------------------------------------------
 :check_python
 set "PY_LAUNCHER="
@@ -971,37 +1096,24 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: :try_python
-::
-:: Runs the candidate's --version. If the returned string starts
-:: with "Python 3.10", "Python 3.11", or "Python 3.12", accept
-:: it and store PY_LAUNCHER and PY_VER.
-::
-:: Never uses PowerShell. Never uses "." as a delimiter.
 :: ------------------------------------------------------------
 :try_python
 set "CANDIDATE=%~1"
 set "RAW="
 
-:: Ask the candidate for its version. Redirect stderr too because
-:: some launchers print version info on stderr.
 for /f "usebackq tokens=*" %%v in (`%CANDIDATE% --version 2^>^&1`) do set "RAW=%%v"
 
 if "!RAW!"=="" exit /b 0
 
-:: Trim trailing whitespace by extracting fixed slices.
-:: "Python 3.10.x" - check first 11 chars
 set "P10=!RAW:~0,11!"
 if "!P10!"=="Python 3.10" goto TRY_PY_ACCEPT
 
-:: "Python 3.11.x"
 set "P11=!RAW:~0,11!"
 if "!P11!"=="Python 3.11" goto TRY_PY_ACCEPT
 
-:: "Python 3.12.x"
 set "P12=!RAW:~0,11!"
 if "!P12!"=="Python 3.12" goto TRY_PY_ACCEPT
 
-:: Not one of ours
 exit /b 0
 
 :TRY_PY_ACCEPT
