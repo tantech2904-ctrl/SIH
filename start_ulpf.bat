@@ -8,20 +8,23 @@ chcp 65001 >nul 2>&1
 ::  ULPF - Universal Log Pre-Processing Framework
 ::  Fully automatic setup + control console.
 ::
-::  Rules enforced in this file to avoid the cmd parser bug
-::  ". was unexpected at this time.":
+::  Rules enforced to avoid two cmd parser bugs:
 ::
-::   1. No "for %%V in (a.b c.d)" lists with dots inside.
-::   2. No "for /f ... delims=." constructs inside parentheses.
-::   3. No "echo." inside a parenthesized block -> use "echo("
-::   4. No line where "." touches ")" from inside a block.
-::   5. Heavy lifting that touches .env is done via PowerShell.
+::   BUG A: ". was unexpected at this time."
+::     Never put a "." inside a parenthesized block where it
+::     touches ")". Never use "." as a for /f delimiter inside
+::     a block. Route .env edits through PowerShell.
+::
+::   BUG B: Python 3.11 installed but bat reports 3.14.
+::     Never invoke "py -3.X" through PowerShell "&" syntax.
+::     Instead call the candidate directly and match the
+::     version string with prefix comparisons (no dot parsing).
 ::
 ::  Safe to re-run. Idempotent.
 :: ============================================================
 
 :: ============================================================
-:: ELEVATION  (cmd-only redirects — no PowerShell before this)
+:: ELEVATION
 :: ============================================================
 net session >nul 2>&1
 if errorlevel 1 goto ELEVATE
@@ -195,6 +198,9 @@ color 0C
 echo          [!!] Local mode requires Python 3.10, 3.11, or 3.12.
 echo               Python 3.13+ is not yet supported.
 echo.
+echo               Installed Python versions detected by the py launcher:
+py -0p 2>nul
+echo.
 echo               Install Python 3.12 from:
 echo                 https://www.python.org/downloads/release/python-3129/
 echo               Check "Add Python to PATH" during install.
@@ -264,7 +270,6 @@ call :backup_env_with_timestamp
 exit /b 0
 
 :backup_env_with_timestamp
-:: Get a safe timestamp via PowerShell to avoid cmd date parsing quirks
 set "TS="
 for /f "usebackq tokens=*" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'yyyy-MM-dd-HHmmss'"`) do set "TS=%%T"
 if "!TS!"=="" set "TS=backup"
@@ -306,13 +311,6 @@ exit /b 1
 
 :: ------------------------------------------------------------
 :: Validate .env critical vars
-::
-:: This routine used to contain a `for %%V in (...)` list with
-:: `echo %%V=ulpf>>"!REPO_ROOT!\.env"` inside. That construct
-:: crashes cmd on some locales with ". was unexpected at this
-:: time." because the parser pre-scans the block, sees the
-:: trailing ".env" and aborts. We now use three explicit calls
-:: to :ensure_env_var, which does the file edit via PowerShell.
 :: ------------------------------------------------------------
 :validate_env_critical
 set "ENV_CHANGED=0"
@@ -390,7 +388,7 @@ exit /b 0
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Validate migrations don't contain unguarded create_all()
+:: Validate migrations
 :: ------------------------------------------------------------
 :validate_migrations
 set "MIG_BAD=0"
@@ -634,7 +632,7 @@ call :log "FATAL: venv creation failed"
 exit /b 1
 
 :: ------------------------------------------------------------
-:: :install_backend_deps - absolute paths only, no pushd
+:: :install_backend_deps
 :: ------------------------------------------------------------
 :install_backend_deps
 echo          Installing core backend dependencies ^(may take a few minutes^)...
@@ -923,70 +921,47 @@ exit /b 0
 :: ------------------------------------------------------------
 :: Python detection
 ::
-:: Version numbers with dots are NOT put inside for(...) lists.
-:: Each candidate is checked with an explicit if.
+:: ULPF supports Python 3.10, 3.11, 3.12.
+::
+:: Probing strategy:
+::   1. Call each launcher DIRECTLY (never through PowerShell).
+::   2. Capture the "Python X.Y.Z" string.
+::   3. Match with string-prefix comparisons — no dot parsing.
+::
+:: We try, in priority order:
+::   py -3.12   (launcher, prefer newest supported)
+::   py -3.11
+::   py -3.10
+::   python     (whatever PATH resolves to)
+::   python3    (POSIX-style alias)
+::
+:: Because we match on the returned version string, even if "python"
+:: resolves to 3.14, we correctly REJECT it and keep looking.
 :: ------------------------------------------------------------
 :check_python
 set "PY_LAUNCHER="
 set "PY_VER="
 
-:: Prefer py -3.12, then py -3.11, then py -3.10
-py -3.12 --version >nul 2>&1
-if not errorlevel 1 call :probe_py "py -3.12"
+call :try_python "py -3.12"
+if not "!PY_LAUNCHER!"=="" goto CHECK_PY_DONE
 
-if "!PY_LAUNCHER!"=="" (
-    py -3.11 --version >nul 2>&1
-    if not errorlevel 1 call :probe_py "py -3.11"
-)
+call :try_python "py -3.11"
+if not "!PY_LAUNCHER!"=="" goto CHECK_PY_DONE
 
-if "!PY_LAUNCHER!"=="" (
-    py -3.10 --version >nul 2>&1
-    if not errorlevel 1 call :probe_py "py -3.10"
-)
+call :try_python "py -3.10"
+if not "!PY_LAUNCHER!"=="" goto CHECK_PY_DONE
 
-:: Fall back to plain python
-if "!PY_LAUNCHER!"=="" (
-    python --version >nul 2>&1
-    if not errorlevel 1 call :probe_py "python"
-)
+call :try_python "python"
+if not "!PY_LAUNCHER!"=="" goto CHECK_PY_DONE
 
-:: Fall back to python3
-if "!PY_LAUNCHER!"=="" (
-    python3 --version >nul 2>&1
-    if not errorlevel 1 call :probe_py "python3"
-)
+call :try_python "python3"
+if not "!PY_LAUNCHER!"=="" goto CHECK_PY_DONE
 
-if "!PY_LAUNCHER!"=="" goto CHECK_PY_MISSING
+goto CHECK_PY_MISSING
+
+:CHECK_PY_DONE
 echo          [OK] !PY_VER!  ^(launcher: !PY_LAUNCHER!^)
 call :log "Python detected: !PY_VER! via !PY_LAUNCHER!"
-exit /b 0
-
-:probe_py
-:: Use PowerShell to determine the major.minor version cleanly.
-:: This avoids cmd's for /f with "." delimiter inside a block.
-set "CANDIDATE=%~1"
-set "MAJOR="
-set "MINOR="
-for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "try { $v = (& '%CANDIDATE%' --version 2>$null) -replace 'Python '; $p = $v.Split('.'); Write-Output ($p[0] + ' ' + $p[1]) } catch { Write-Output '0 0' }"`) do (
-    for /f "tokens=1,2" %%a in ("%%v") do (
-        set "MAJOR=%%a"
-        set "MINOR=%%b"
-    )
-)
-
-if not "!MAJOR!"=="3" exit /b 0
-
-set "OK=0"
-if "!MINOR!"=="10" set "OK=1"
-if "!MINOR!"=="11" set "OK=1"
-if "!MINOR!"=="12" set "OK=1"
-if "!OK!"=="0" exit /b 0
-
-:: Fetch the full version string for display
-for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "try { (& '%CANDIDATE%' --version 2>$null) } catch { '' }"`) do set "FULL_VER=%%v"
-
-set "PY_LAUNCHER=!CANDIDATE!"
-set "PY_VER=!FULL_VER!"
 exit /b 0
 
 :CHECK_PY_MISSING
@@ -994,6 +969,49 @@ echo          [--] Python 3.10 / 3.11 / 3.12 not found.
 call :log "Python not found (3.10-3.12 required)"
 exit /b 0
 
+:: ------------------------------------------------------------
+:: :try_python
+::
+:: Runs the candidate's --version. If the returned string starts
+:: with "Python 3.10", "Python 3.11", or "Python 3.12", accept
+:: it and store PY_LAUNCHER and PY_VER.
+::
+:: Never uses PowerShell. Never uses "." as a delimiter.
+:: ------------------------------------------------------------
+:try_python
+set "CANDIDATE=%~1"
+set "RAW="
+
+:: Ask the candidate for its version. Redirect stderr too because
+:: some launchers print version info on stderr.
+for /f "usebackq tokens=*" %%v in (`%CANDIDATE% --version 2^>^&1`) do set "RAW=%%v"
+
+if "!RAW!"=="" exit /b 0
+
+:: Trim trailing whitespace by extracting fixed slices.
+:: "Python 3.10.x" - check first 11 chars
+set "P10=!RAW:~0,11!"
+if "!P10!"=="Python 3.10" goto TRY_PY_ACCEPT
+
+:: "Python 3.11.x"
+set "P11=!RAW:~0,11!"
+if "!P11!"=="Python 3.11" goto TRY_PY_ACCEPT
+
+:: "Python 3.12.x"
+set "P12=!RAW:~0,11!"
+if "!P12!"=="Python 3.12" goto TRY_PY_ACCEPT
+
+:: Not one of ours
+exit /b 0
+
+:TRY_PY_ACCEPT
+set "PY_LAUNCHER=!CANDIDATE!"
+set "PY_VER=!RAW!"
+exit /b 0
+
+:: ------------------------------------------------------------
+:: Node detection
+:: ------------------------------------------------------------
 :check_node
 node --version >nul 2>&1
 if errorlevel 1 goto CHECK_NODE_MISSING
