@@ -14,7 +14,7 @@ chcp 65001 >nul 2>&1
 ::    3. Validate prerequisites for that mode
 ::    4. Prepare and validate .env
 ::    5. Install & start the host log connector service
-::    6. Apply database migrations (local mode) / start stack
+::    6. Prepare the database, start services
 ::    7. Open the browser
 ::    8. Stay open as a control console (type q to quit)
 ::
@@ -22,7 +22,7 @@ chcp 65001 >nul 2>&1
 ::  If multiple versions are installed, the newest supported
 ::  one is picked automatically via the py launcher.
 ::
-::  Safe to re-run. Idempotent.
+::  If this file fails, run cleanup_ulpf.bat to reset everything.
 :: ============================================================
 
 :: ============================================================
@@ -707,17 +707,10 @@ exit /b 1
 :: ------------------------------------------------------------
 :: :bootstrap_local_db
 ::
-:: Local mode must prepare the schema BEFORE uvicorn starts.
-:: Two databases are supported:
-::
-::   sqlite://      -> run a Python snippet that calls
-::                     Base.metadata.create_all() and then
-::                     seeds the DB via app.db.init_db. Alembic
-::                     migrations are Postgres-specific and would
-::                     fail on SQLite.
-::
-::   postgresql://  -> run "alembic upgrade head", exactly like
-::                     the Docker entrypoint does.
+:: Reads DATABASE_URL from .env (via a temp file so quoting is
+:: not an issue), then:
+::   sqlite://   -> create_all() + init_db()
+::   postgresql  -> alembic upgrade head
 :: ------------------------------------------------------------
 :bootstrap_local_db
 echo          Preparing database schema...
@@ -726,23 +719,47 @@ set "VENV_PY=!REPO_ROOT!\backend\venv\Scripts\python.exe"
 if not exist "!VENV_PY!" goto DB_NO_VENV_PY
 
 set "DB_URL="
-for /f "usebackq tokens=2* delims==" %%A in (`powershell -NoProfile -Command "(Select-String -Path '!REPO_ROOT!\.env' -Pattern '^DATABASE_URL=' | Select-Object -First 1).Line"`) do set "DB_URL=%%B"
-if "!DB_URL!"=="" goto DB_NO_URL
+set "DB_TMP=%TEMP%\ulpf_dburl.txt"
+if exist "!DB_TMP!" del "!DB_TMP!" >nul 2>&1
+
+:: Extract DATABASE_URL value to a temp file.
+powershell -NoProfile -Command ^
+    "$line = Get-Content -LiteralPath '!REPO_ROOT!\.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match 'DATABASE_URL' } | Select-Object -First 1; if ($line) { ($line -split '=',2)[1].Trim() | Set-Content -LiteralPath '!DB_TMP!' -NoNewline -Encoding ascii }"
+
+if exist "!DB_TMP!" (
+    set /p "DB_URL="<"!DB_TMP!"
+    del "!DB_TMP!" >nul 2>&1
+)
+
+if defined DB_URL set "DB_URL=!DB_URL:"=!"
+
+if "!DB_URL!"=="" goto DB_DEFAULT_SQLITE
+
 echo          DATABASE_URL = !DB_URL!
 
-if /i "!DB_URL:~0,9!"=="sqlite://" goto DB_SQLITE
-if /i "!DB_URL:~0,14!"=="sqlite+pysqlite" goto DB_SQLITE
+set "DETECT=!DB_URL:~0,9!"
+if /i "!DETECT!"=="sqlite://" goto DB_SQLITE
+
+set "DETECT=!DB_URL:~0,14!"
+if /i "!DETECT!"=="sqlite+pysqlite" goto DB_SQLITE
+
 goto DB_POSTGRES
+
+:DB_DEFAULT_SQLITE
+echo          [!!] DATABASE_URL not found in .env - defaulting to SQLite.
+set "DB_URL=sqlite:///./ulpf_local.db"
+powershell -NoProfile -Command "Add-Content -LiteralPath '!REPO_ROOT!\.env' -Value 'DATABASE_URL=sqlite:///./ulpf_local.db'"
+echo          DATABASE_URL = !DB_URL!
+goto DB_SQLITE
 
 :DB_SQLITE
 echo          SQLite detected - bootstrapping via create_all + seed.
 
 (
-    echo import os, sys
+    echo import sys
     echo sys.path.insert^(0, r'!REPO_ROOT!\backend'^)
     echo from app.db.base import Base
     echo from app.db.session import engine
-    echo from app.db import init_db as _
     echo Base.metadata.create_all^(bind=engine^)
     echo from app.db.init_db import init_db
     echo init_db^(^)
@@ -777,12 +794,6 @@ exit /b 0
 color 0C
 echo          ERROR: venv python missing for db bootstrap.
 call :log "FATAL: db bootstrap - venv python missing"
-exit /b 1
-
-:DB_NO_URL
-color 0C
-echo          ERROR: DATABASE_URL not found in .env.
-call :log "FATAL: DATABASE_URL missing"
 exit /b 1
 
 :DB_NO_ALEMBIC_INI
@@ -840,14 +851,6 @@ exit /b 1
 
 :: ============================================================
 :: WAIT FOR READY
-::
-:: Polls three endpoints:
-::   1. Frontend (Vite/nginx) - HTTP 200
-::   2. Backend /health/ready - HTTP 200
-::   3. /auth/login with empty body - expects 401/422, NOT 500
-::      A 500 means the server is up but the database schema
-::      is broken (missing table, bad migration, etc).
-::      We must not advance to the browser until this passes.
 :: ============================================================
 :WAIT_FOR_READY
 color 0B
@@ -904,6 +907,8 @@ echo.
 echo     For local mode, check the "ULPF Backend" window.
 echo.
 echo     Full log: %INSTALL_LOG%
+echo.
+echo     To reset everything: run cleanup_ulpf.bat
 echo.
 pause
 call :shutdown_now
@@ -1055,13 +1060,6 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: Python detection
-::
-:: ULPF supports Python 3.10, 3.11, 3.12.
-::
-:: Probing strategy:
-::   1. Call each launcher DIRECTLY (never through PowerShell).
-::   2. Capture the "Python X.Y.Z" string.
-::   3. Match with string-prefix comparisons - no dot parsing.
 :: ------------------------------------------------------------
 :check_python
 set "PY_LAUNCHER="
@@ -1094,9 +1092,6 @@ echo          [--] Python 3.10 / 3.11 / 3.12 not found.
 call :log "Python not found (3.10-3.12 required)"
 exit /b 0
 
-:: ------------------------------------------------------------
-:: :try_python
-:: ------------------------------------------------------------
 :try_python
 set "CANDIDATE=%~1"
 set "RAW="
@@ -1665,6 +1660,9 @@ echo.
 echo     If Connector shows "not installed" or "stopped", run this
 echo     script once as Administrator (right-click the .bat file
 echo     and choose "Run as administrator") to install it.
+echo.
+echo     If something is fundamentally broken and you want to reset
+echo     everything, run cleanup_ulpf.bat.
 echo.
 echo     Press any key to return to the console.
 exit /b 0
