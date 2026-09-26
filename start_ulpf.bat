@@ -10,12 +10,13 @@ chcp 65001 >nul 2>&1
 ::
 ::  Just double-click this file. It will:
 ::    1. Request Administrator (UAC prompt - accept it)
-::    2. Detect Docker / Python / Node
-::    3. Prepare and validate .env
-::    4. Install & start the host log connector service
-::    5. Start the stack
-::    6. Open the browser
-::    7. Stay open as a control console (type q to quit)
+::    2. Ask which mode to run in (Docker / Local)
+::    3. Validate prerequisites for that mode
+::    4. Prepare and validate .env
+::    5. Install & start the host log connector service
+::    6. Start the stack
+::    7. Open the browser
+::    8. Stay open as a control console (type q to quit)
 ::
 ::  Safe to re-run. Idempotent.
 :: ============================================================
@@ -53,10 +54,10 @@ exit /b 0
 
 :: -------------------- Parse args --------------------
 set "ARG_RESET_ENV=0"
-set "ARG_NO_WATCHDOG=1"
 set "ARG_REBUILD=0"
 set "ARG_NO_CONNECTOR=0"
 set "ARG_AUTO=1"
+set "ARG_MODE="
 for %%A in (%*) do call :parse_arg "%%~A"
 
 :: -------------------- Repo root --------------------
@@ -79,7 +80,6 @@ set "DOCKER_OK=0"
 set "PY_VER="
 set "NODE_VER="
 set "FIRST_RUN=true"
-set "MY_PID="
 set "LAST_CHECK=ok"
 set "CONNECTOR_STATE=unknown"
 set "SVC_LINE="
@@ -87,7 +87,7 @@ set "SVC_RC="
 set "SVC_CACHE_TS=0"
 
 :: ============================================================
-:: HEADER  (auto-continues after 4s — no keypress needed)
+:: HEADER
 :: ============================================================
 call :draw_header
 echo.
@@ -97,55 +97,72 @@ echo       will be modified.
 echo.
 echo       Running elevated: connector service will be managed.
 echo.
-echo   ------------------------------------------------------------
-echo       Auto-starting in 4 seconds. Press any key to skip wait.
-echo   ------------------------------------------------------------
-echo.
-timeout /t 4 /nobreak >nul
-
 call :log "===== ULPF setup starting ====="
 call :log "Repo root: !REPO_ROOT!"
 
 if exist "%INSTALL_MARKER%" set "FIRST_RUN=false"
 
 :: ============================================================
-:: STEP 1 - PREREQUISITES
+:: STEP 1 - MODE SELECTION  (asked first, before any checks)
 :: ============================================================
-call :draw_step 1 "Checking prerequisites"
-echo.
+:STEP_MODE
+if not "!ARG_MODE!"=="" (
+    set "CHOICE=!ARG_MODE!"
+    goto MODE_RESOLVE
+)
 
-call :check_docker
-call :check_python
-call :check_node
-
-echo.
-timeout /t 1 /nobreak >nul
-
-:: ============================================================
-:: STEP 2 - MODE SELECTION
-:: ============================================================
-call :draw_step 2 "Selecting run mode"
-echo.
-
-if "!DOCKER_OK!"=="1" goto MODE_DOCKER
-
-echo          Docker was not detected on this system.
-echo.
-echo          ULPF runs best with Docker Desktop installed.
-echo.
-echo          Without Docker, ULPF can run in LOCAL MODE using
-echo          your existing Python and Node installations.
-echo.
-echo   ------------------------------------------------------------
-echo        [1]  Install Docker Desktop ^(recommended^)
-echo        [2]  Continue with LOCAL MODE
-echo        [3]  Exit setup
-echo   ------------------------------------------------------------
-echo.
+call :draw_mode_menu
 set /p "CHOICE=          Enter choice [1/2/3]: "
 
-if "!CHOICE!"=="1" goto CHOICE_INSTALL_DOCKER
-if "!CHOICE!"=="2" goto MODE_LOCAL
+:MODE_RESOLVE
+if "!CHOICE!"=="1" goto MODE_TRY_DOCKER
+if "!CHOICE!"=="2" goto MODE_TRY_LOCAL
+if "!CHOICE!"=="3" goto MODE_EXIT
+if /i "!CHOICE!"=="docker" goto MODE_TRY_DOCKER
+if /i "!CHOICE!"=="local"  goto MODE_TRY_LOCAL
+if /i "!CHOICE!"=="exit"   goto MODE_EXIT
+echo.
+echo          Invalid choice. Please enter 1, 2, or 3.
+timeout /t 2 /nobreak >nul
+set "CHOICE="
+goto STEP_MODE
+
+:MODE_EXIT
+echo.
+echo          Exiting setup.
+exit /b 0
+
+:MODE_TRY_DOCKER
+set "MODE=docker"
+call :log "Mode selected: docker"
+goto MODE_VALIDATE_DOCKER
+
+:MODE_TRY_LOCAL
+set "MODE=local"
+call :log "Mode selected: local"
+goto MODE_VALIDATE_LOCAL
+
+:: ------------------------------------------------------------
+:: Mode validation — Docker
+:: ------------------------------------------------------------
+:MODE_VALIDATE_DOCKER
+call :draw_step 1 "Validating Docker mode"
+echo.
+call :check_docker
+echo.
+if "!DOCKER_OK!"=="1" goto MODE_LOCKED
+
+color 0E
+echo          [!!] Docker is not available on this system.
+echo.
+echo          Options:
+echo            [1]  Open the Docker Desktop download page
+echo            [2]  Go back and choose LOCAL mode instead
+echo            [3]  Exit setup
+echo.
+set /p "DRCHOICE=          Enter choice [1/2/3]: "
+if "!DRCHOICE!"=="1" goto CHOICE_INSTALL_DOCKER
+if "!DRCHOICE!"=="2" goto STEP_MODE
 echo          Exiting setup.
 exit /b 0
 
@@ -160,50 +177,54 @@ echo.
 pause
 exit /b 0
 
-:MODE_DOCKER
-set "MODE=docker"
-echo          Docker is available. Using DOCKER MODE.
-echo          ^(Recommended - no local installs required.^)
-call :log "Mode selected: docker"
-goto MODE_LOCKED
-
-:MODE_LOCAL
-set "MODE=local"
-echo          Continuing with LOCAL MODE.
-call :log "Mode selected: local (user chose fallback)"
-goto MODE_LOCKED
-
-:MODE_LOCKED
+:: ------------------------------------------------------------
+:: Mode validation — Local
+:: ------------------------------------------------------------
+:MODE_VALIDATE_LOCAL
+call :draw_step 1 "Validating local mode"
 echo.
-timeout /t 1 /nobreak >nul
-
-if "!MODE!"=="local" goto CHECK_LOCAL_PREREQS
-goto STEP_ENV
-
-:CHECK_LOCAL_PREREQS
-if "!PY_VER!"=="" goto LOCAL_NO_PY
+call :check_python
+call :check_node
+echo.
+if "!PY_VER!"==""  goto LOCAL_NO_PY
 if "!NODE_VER!"=="" goto LOCAL_NO_NODE
-goto STEP_ENV
+goto MODE_LOCKED
 
 :LOCAL_NO_PY
 color 0C
-echo          ERROR: Local mode requires Python 3.10 or newer.
-call :log "FATAL: local mode without suitable Python"
-pause
+echo          [!!] Local mode requires Python 3.10 or newer.
+echo               Install Python from https://www.python.org/downloads/
+echo               and check "Add Python to PATH" during install.
+echo.
+echo            [1]  Go back and choose DOCKER mode
+echo            [2]  Exit setup
+echo.
+set /p "LRCHOICE=          Enter choice [1/2]: "
+if "!LRCHOICE!"=="1" goto STEP_MODE
 exit /b 1
 
 :LOCAL_NO_NODE
 color 0C
-echo          ERROR: Local mode requires Node 18 or newer.
-call :log "FATAL: local mode without Node"
-pause
+echo          [!!] Local mode requires Node 18 or newer.
+echo               Install Node from https://nodejs.org/
+echo.
+echo            [1]  Go back and choose DOCKER mode
+echo            [2]  Exit setup
+echo.
+set /p "LRCHOICE=          Enter choice [1/2]: "
+if "!LRCHOICE!"=="1" goto STEP_MODE
 exit /b 1
 
+:MODE_LOCKED
+echo.
+echo          Mode locked: !MODE!
+echo.
+timeout /t 1 /nobreak >nul
+
 :: ============================================================
-:: STEP 3 - ENV FILE
+:: STEP 2 - ENV FILE
 :: ============================================================
-:STEP_ENV
-call :draw_step 3 "Preparing environment file"
+call :draw_step 2 "Preparing environment file"
 echo.
 
 call :pick_template
@@ -305,8 +326,6 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: Validate .env matches the chosen mode.
-:: In LOCAL mode, service hostnames (postgres/redis/minio) won't
-:: resolve on the host. Warn and offer to fix.
 :: ------------------------------------------------------------
 :validate_env_for_mode
 if "!MODE!"=="docker" goto VALIDATE_MODE_DOCKER
@@ -342,8 +361,6 @@ color 0B
 exit /b 0
 
 :VALIDATE_MODE_DOCKER
-:: Docker mode is fine with either form; patch_env_for_docker
-:: already normalizes on first creation. No action needed here.
 exit /b 0
 
 :: ------------------------------------------------------------
@@ -375,12 +392,13 @@ if "!MIG_BAD!"=="1" (
 exit /b 0
 
 :: ============================================================
-:: STEP 4 - CONNECTOR SERVICE  (FULLY AUTOMATIC)
+:: STEP 3 - CONNECTOR SERVICE
 :: ============================================================
 :STEP_CONNECTOR
 if "!ARG_NO_CONNECTOR!"=="1" goto CONNECTOR_SKIPPED
-call :draw_step 4 "Host log connector"
+call :draw_step 3 "Host log connector"
 echo.
+if "!PY_VER!"=="" call :check_python
 if "!PY_VER!"=="" goto CONNECTOR_NO_PY
 if not exist "!REPO_ROOT!\scripts\ulpf-connector\connector.py" goto CONNECTOR_NO_SCRIPTS
 call :setup_connector_service
@@ -388,7 +406,7 @@ call :refresh_connector_state
 goto AFTER_CONNECTOR
 
 :CONNECTOR_SKIPPED
-call :draw_step 4 "Host log connector"
+call :draw_step 3 "Host log connector"
 echo.
 echo          [--] Connector install skipped ^(--no-connector^).
 set "CONNECTOR_STATE=skipped"
@@ -414,9 +432,9 @@ echo.
 timeout /t 1 /nobreak >nul
 
 :: ============================================================
-:: STEP 5 - START SERVICES
+:: STEP 4 - START SERVICES
 :: ============================================================
-call :draw_step 5 "Starting services"
+call :draw_step 4 "Starting services"
 echo.
 
 if "!MODE!"=="docker" goto START_DOCKER
@@ -566,14 +584,7 @@ echo          [OK] Frontend dependencies installed.
 exit /b 0
 
 :: ============================================================
-:: WATCHDOG  (disabled — see header notes)
-:: ============================================================
-:START_WATCHDOG
-call :log "Watchdog disabled"
-goto WAIT_FOR_READY
-
-:: ============================================================
-:: WAIT FOR READY  (raised to 300s to accommodate first-run npm)
+:: WAIT FOR READY  (up to 300s for first-run npm install)
 :: ============================================================
 :WAIT_FOR_READY
 color 0B
@@ -731,7 +742,6 @@ echo     [!] docker compose down reported an error.
 exit /b 0
 
 :SHUTDOWN_LOCAL
-:: Try a graceful taskkill first (no /F), then force if needed.
 taskkill /FI "WINDOWTITLE eq ULPF Backend*" /T >nul 2>&1
 taskkill /FI "WINDOWTITLE eq ULPF Frontend*" /T >nul 2>&1
 timeout /t 2 /nobreak >nul
@@ -746,10 +756,11 @@ exit /b 0
 
 :parse_arg
 if /i "%~1"=="--reset-env"    set "ARG_RESET_ENV=1"
-if /i "%~1"=="--no-watchdog"  set "ARG_NO_WATCHDOG=1"
 if /i "%~1"=="--rebuild"      set "ARG_REBUILD=1"
 if /i "%~1"=="--no-connector" set "ARG_NO_CONNECTOR=1"
 if /i "%~1"=="--no-auto"      set "ARG_AUTO=0"
+if /i "%~1"=="--docker"       set "ARG_MODE=1"
+if /i "%~1"=="--local"        set "ARG_MODE=2"
 exit /b 0
 
 :log
@@ -825,28 +836,22 @@ call :log "Node not found"
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Connector service  (auto-seeds config, auto-fixes, auto-installs)
+:: Connector service
 :: ------------------------------------------------------------
 :setup_connector_service
 set "CONNECTOR_DIR=!REPO_ROOT!\scripts\ulpf-connector"
 
-:: 0. Ensure the SYSTEM-readable ProgramData folder exists (we have admin)
 if not exist "!CONNECTOR_DATA_DIR!" mkdir "!CONNECTOR_DATA_DIR!" >nul 2>&1
 icacls "!CONNECTOR_DATA_DIR!" /grant "SYSTEM:(OI)(CI)F" /grant "Administrators:(OI)(CI)F" /T >nul 2>&1
 
-:: 1. Migrate any old config from the user profile (one-time)
 if exist "%ULPF_HOME%\connector.json" if not exist "!CONNECTOR_CONFIG!" (
     copy /Y "%ULPF_HOME%\connector.json" "!CONNECTOR_CONFIG!" >nul
     echo          [OK] Migrated connector config to !CONNECTOR_DATA_DIR!
 )
 
-:: 2. Seed config if still missing
 if not exist "!CONNECTOR_CONFIG!" call :seed_connector_config
-
-:: 3. Normalize config if the helper script exists
 if exist "!CONNECTOR_DIR!\fix_config.py" call :fix_connector_config
 
-:: 4. Query current status
 call :query_connector_status
 echo          Current status: !SVC_LINE!
 call :log "Connector status: rc=!SVC_RC! line=!SVC_LINE!"
@@ -917,7 +922,7 @@ if not exist "!REPO_ROOT!\scripts\ulpf-connector\install_service.py" goto REFRES
 set "CONNECTOR_DIR=!REPO_ROOT!\scripts\ulpf-connector"
 if not exist "!CONNECTOR_CONFIG!" goto REFRESH_CONNECTOR_NO_CONFIG
 
-:: Only re-poll every 30s (avoids spawning Python every 5s tick)
+:: Only re-poll every 30s
 for /f "tokens=*" %%T in ('powershell -NoProfile -Command "[int][double]::Parse((Get-Date -UFormat %%s))"') do set "NOW_TS=%%T"
 set /a SINCE=!NOW_TS!-!SVC_CACHE_TS!
 if !SINCE! LSS 30 if not "!CONNECTOR_STATE!"=="unknown" exit /b 0
@@ -970,7 +975,6 @@ set "INST_RC=!ERRORLEVEL!"
 call :log "Connector install rc=!INST_RC!"
 if "!INST_RC!"=="0" goto CONNECTOR_INSTALL_VERIFY
 
-:: ---- AUTO-RETRY once (no --force; that flag doesn't exist) ----
 echo          [!!] First attempt failed ^(rc=!INST_RC!^). Retrying once...
 call :log "Connector install failed rc=!INST_RC! - retrying once"
 timeout /t 2 /nobreak >nul
@@ -986,7 +990,6 @@ color 0B
 exit /b 0
 
 :CONNECTOR_INSTALL_VERIFY
-:: Poll up to 15s for the process to prove it survives startup.
 set /a VWAIT=0
 :CONNECTOR_VERIFY_LOOP
 timeout /t 2 /nobreak >nul
@@ -1077,8 +1080,6 @@ if "!OLD_REQ!"=="!CUR_REQ!" exit /b 0
 goto DETECT_STALE_PROMPT
 
 :DETECT_STALE_MARKER_MISSING
-:: On a truly fresh clone there's no marker AND no images.
-:: `docker compose up -d` will build them anyway — no need for --no-cache.
 docker image inspect sih-main-backend >nul 2>&1
 if errorlevel 1 (
     call :log "No marker and no backend image; letting 'up -d' build it"
@@ -1130,13 +1131,18 @@ echo          [OK] Images rebuilt.
 exit /b 0
 
 :: ------------------------------------------------------------
-:: Force rebuild from the control loop
+:: Force rebuild (mode-aware)
 :: ------------------------------------------------------------
 :force_rebuild
 color 0E
 cls
-call :draw_banner "FORCE REBUILD"
+call :draw_banner "REBUILD"
 echo.
+if "!MODE!"=="docker" goto FORCE_REBUILD_DOCKER
+if "!MODE!"=="local"  goto FORCE_REBUILD_LOCAL
+exit /b 0
+
+:FORCE_REBUILD_DOCKER
 echo     This will run:
 echo       docker compose build --no-cache backend frontend
 echo       docker compose up -d --remove-orphans
@@ -1156,6 +1162,25 @@ docker compose up -d --remove-orphans
 if errorlevel 1 goto FORCE_REBUILD_FAIL
 echo.
 echo     [OK] Rebuild complete.
+call :write_marker
+color 0B
+timeout /t 2 /nobreak >nul
+exit /b 0
+
+:FORCE_REBUILD_LOCAL
+echo     This will reinstall dependencies and restart local windows:
+echo       - pip install -r backend\requirements.txt
+echo       - npm install ^(if node_modules missing^)
+echo       - restart "ULPF Backend" and "ULPF Frontend" windows
+echo.
+set /p "RBOK=          Proceed? [y/N]: "
+if /i not "!RBOK!"=="y" goto FORCE_REBUILD_CANCEL
+
+echo.
+echo     Restarting local services...
+call :restart_stack
+echo.
+echo     [OK] Local rebuild complete.
 call :write_marker
 color 0B
 timeout /t 2 /nobreak >nul
@@ -1187,6 +1212,27 @@ echo.
 echo   ============================================================
 exit /b 0
 
+:draw_mode_menu
+cls
+echo.
+echo   ============================================================
+echo.
+echo               U L P F   -   S E T U P
+echo.
+echo        Universal Log Pre-Processing Framework
+echo.
+echo   ============================================================
+echo.
+echo        How would you like to run ULPF?
+echo.
+echo   ------------------------------------------------------------
+echo        [1]  Docker      ^(recommended — no local installs^)
+echo        [2]  Local       ^(uses existing Python + Node^)
+echo        [3]  Exit
+echo   ------------------------------------------------------------
+echo.
+exit /b 0
+
 :draw_banner
 echo   ============================================================
 echo     %~1
@@ -1195,7 +1241,7 @@ exit /b 0
 
 :draw_step
 echo.
-echo   [%~1/5]  %~2...
+echo   [%~1/4]  %~2...
 exit /b 0
 
 :draw_starting
@@ -1290,9 +1336,9 @@ echo       s   Force a health check right now ^(backend + connector^).
 echo       l   Show the last 30 lines of backend logs.
 echo       o   Open http://localhost:5173 in your browser.
 echo       h   Show this help.
-echo       r   Restart the stack ^(docker compose restart^).
-echo       b   Rebuild images from scratch. Use this after editing
-echo           backend code or requirements.txt. Takes 3-6 minutes.
+echo       r   Restart the stack.
+echo       b   Rebuild from scratch. Docker: docker compose build.
+echo           Local: pip install + npm install + restart windows.
 echo       c   Clear and redraw the console.
 echo       q   Stop everything and close this window.
 echo.
@@ -1303,9 +1349,6 @@ echo.
 echo     If Connector shows "not installed" or "stopped", run this
 echo     script once as Administrator (right-click the .bat file
 echo     and choose "Run as administrator") to install it.
-echo.
-echo     Closing this window leaves the Docker stack running. To stop
-echo     it cleanly, press q here or run `docker compose down`.
 echo.
 echo     Press any key to return to the console.
 exit /b 0
