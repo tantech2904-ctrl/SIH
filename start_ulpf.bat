@@ -108,7 +108,7 @@ call :log "Repo root: !REPO_ROOT!"
 if exist "%INSTALL_MARKER%" set "FIRST_RUN=false"
 
 :: ============================================================
-:: STEP 1 - MODE SELECTION  (asked first, before any checks)
+:: STEP 1 - MODE SELECTION
 :: ============================================================
 :STEP_MODE
 if not "!ARG_MODE!"=="" (
@@ -317,7 +317,6 @@ for %%V in (POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB) do (
     )
 )
 
-:: Catch empty POSTGRES_PASSWORD (allowing trailing spaces)
 findstr /R /C:"^POSTGRES_PASSWORD= *$" "!REPO_ROOT!\.env" >nul 2>&1
 if not errorlevel 1 (
     echo          [!!] POSTGRES_PASSWORD is empty - fixing.
@@ -405,7 +404,6 @@ exit /b 0
 if "!ARG_NO_CONNECTOR!"=="1" goto CONNECTOR_SKIPPED
 call :draw_step 3 "Host log connector"
 echo.
-:: Connector needs Python even in Docker mode
 if "!PY_LAUNCHER!"=="" call :check_python
 if "!PY_LAUNCHER!"=="" goto CONNECTOR_NO_PY
 if not exist "!REPO_ROOT!\scripts\ulpf-connector\connector.py" goto CONNECTOR_NO_SCRIPTS
@@ -506,32 +504,52 @@ exit /b 1
 :START_LOCAL
 call :log "Starting local stack"
 
+:: --- Sanity check: launcher must be present ---
+if "!PY_LAUNCHER!"=="" (
+    color 0C
+    echo          ERROR: No supported Python launcher detected.
+    call :log "FATAL: PY_LAUNCHER empty at START_LOCAL"
+    pause
+    exit /b 1
+)
+echo          Using Python: !PY_LAUNCHER!
+
+:: --- Debug: show what we're about to operate on ---
+echo          Repo root: !REPO_ROOT!
+if not exist "!REPO_ROOT!\backend\requirements.txt" (
+    color 0C
+    echo          ERROR: backend\requirements.txt not found.
+    call :log "FATAL: requirements.txt missing"
+    pause
+    exit /b 1
+)
+
+:: --- Create venv if missing ---
+if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" goto LOCAL_NEED_VENV
+goto LOCAL_VENV_READY
+
+:LOCAL_NEED_VENV
+call :create_venv
+if errorlevel 1 goto LOCAL_VENV_FAILED
+
+:LOCAL_VENV_READY
 if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" (
-    call :create_venv
-    if errorlevel 1 (
-        color 0C
-        echo          ERROR: venv creation failed. Aborting local start.
-        pause
-        exit /b 1
-    )
+    color 0C
+    echo          ERROR: backend\venv\Scripts\python.exe not found after venv step.
+    call :log "FATAL: venv python missing"
+    pause
+    exit /b 1
 )
 
+:: --- Install backend deps ---
 call :install_backend_deps
-if errorlevel 1 (
-    color 0C
-    echo          ERROR: backend dependency install failed.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto LOCAL_PIP_FAILED
 
+:: --- Install frontend deps ---
 call :install_frontend_deps
-if errorlevel 1 (
-    color 0C
-    echo          ERROR: frontend dependency install failed.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto LOCAL_NPM_FAILED
 
+:: --- Spawn windows ---
 echo          Starting backend window...
 start "ULPF Backend" cmd /k "cd /d ""!REPO_ROOT!\backend"" && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 
@@ -542,49 +560,142 @@ call :log "Spawned backend and frontend windows"
 call :write_marker
 goto WAIT_FOR_READY
 
+:LOCAL_VENV_FAILED
+color 0C
+echo.
+echo          ERROR: venv creation failed.
+echo          Check %INSTALL_LOG% for details.
+call :log "FATAL: venv creation failed"
+pause
+exit /b 1
+
+:LOCAL_PIP_FAILED
+color 0C
+echo.
+echo          ERROR: pip install failed.
+echo          Check %INSTALL_LOG% for details.
+call :log "FATAL: pip install failed"
+pause
+exit /b 1
+
+:LOCAL_NPM_FAILED
+color 0C
+echo.
+echo          ERROR: npm install failed.
+echo          Check %INSTALL_LOG% for details.
+call :log "FATAL: npm install failed"
+pause
+exit /b 1
+
+:: ------------------------------------------------------------
+:: :create_venv — absolute paths only, no pushd
+:: ------------------------------------------------------------
 :create_venv
 echo          Creating Python virtual environment with !PY_LAUNCHER!...
-pushd "!REPO_ROOT!\backend"
-!PY_LAUNCHER! -m venv venv
+
+:: Remove any partial venv from a previous failed run
+if exist "!REPO_ROOT!\backend\venv" (
+    echo          Removing stale venv directory...
+    rmdir /s /q "!REPO_ROOT!\backend\venv" >nul 2>&1
+)
+
+:: Create venv using absolute path
+!PY_LAUNCHER! -m venv "!REPO_ROOT!\backend\venv"
 set "RC=!ERRORLEVEL!"
-popd
-if not "!RC!"=="0" goto VENV_FAILED
+
+if not "!RC!"=="0" (
+    echo          venv creation exited with code !RC!.
+    call :log "venv creation failed rc=!RC!"
+    goto VENV_FAILED
+)
+
+if not exist "!REPO_ROOT!\backend\venv\Scripts\python.exe" (
+    echo          venv created but Scripts\python.exe missing.
+    call :log "venv created but python.exe missing"
+    goto VENV_FAILED
+)
+
+echo          [OK] Virtual environment created.
 exit /b 0
 
 :VENV_FAILED
 call :log "FATAL: venv creation failed"
 exit /b 1
 
+:: ------------------------------------------------------------
+:: :install_backend_deps — absolute paths only, no pushd
+:: ------------------------------------------------------------
 :install_backend_deps
 echo          Installing core backend dependencies ^(may take a few minutes^)...
-pushd "!REPO_ROOT!\backend"
-venv\Scripts\python.exe -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r requirements.txt >>"%INSTALL_LOG%" 2>&1
+
+set "VENV_PY=!REPO_ROOT!\backend\venv\Scripts\python.exe"
+
+if not exist "!VENV_PY!" (
+    color 0C
+    echo          ERROR: !VENV_PY! not found.
+    call :log "FATAL: venv python missing before pip install"
+    exit /b 1
+)
+
+if not exist "!REPO_ROOT!\backend\requirements.txt" (
+    color 0C
+    echo          ERROR: backend\requirements.txt not found.
+    call :log "FATAL: requirements.txt missing"
+    exit /b 1
+)
+
+echo          Running: pip install -r requirements.txt
+"!VENV_PY!" -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r "!REPO_ROOT!\backend\requirements.txt" >>"%INSTALL_LOG%" 2>&1
 set "RC=!ERRORLEVEL!"
+
 if not "!RC!"=="0" (
+    color 0C
+    echo          ERROR: pip install failed with code !RC!.
+    echo          Last 20 lines of %INSTALL_LOG%:
+    echo          ------------------------------------------------
+    powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
+    echo          ------------------------------------------------
     call :log "FATAL: pip install failed rc=!RC!"
-    popd
     exit /b 1
 )
 echo          [OK] Core dependencies installed.
+
 echo          Installing optional dependencies ^(may be skipped^)...
-venv\Scripts\python.exe -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r requirements-optional.txt >>"%INSTALL_LOG%" 2>&1
-if errorlevel 1 (
-    color 0E
-    echo          [!!] Optional dependencies failed ^(non-fatal^).
-    call :log "WARN: optional dependencies failed"
+if exist "!REPO_ROOT!\backend\requirements-optional.txt" (
+    "!VENV_PY!" -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=100 --retries=8 -r "!REPO_ROOT!\backend\requirements-optional.txt" >>"%INSTALL_LOG%" 2>&1
+    if errorlevel 1 (
+        color 0E
+        echo          [!!] Optional dependencies failed ^(non-fatal^).
+        call :log "WARN: optional dependencies failed"
+    ) else (
+        echo          [OK] Optional dependencies installed.
+    )
+) else (
+    echo          [--] requirements-optional.txt not present, skipping.
 )
-echo          [OK] Optional dependencies step complete.
-popd
+
 exit /b 0
 
+:: ------------------------------------------------------------
+:: :install_frontend_deps
+:: ------------------------------------------------------------
 :install_frontend_deps
 if exist "!REPO_ROOT!\frontend\node_modules" exit /b 0
+
 echo          Installing frontend dependencies ^(may take a few minutes^)...
+
 pushd "!REPO_ROOT!\frontend"
 call npm install >>"%INSTALL_LOG%" 2>&1
 set "RC=!ERRORLEVEL!"
 popd
+
 if not "!RC!"=="0" (
+    color 0C
+    echo          ERROR: npm install failed with code !RC!.
+    echo          Last 20 lines of %INSTALL_LOG%:
+    echo          ------------------------------------------------
+    powershell -NoProfile -Command "Get-Content '%INSTALL_LOG%' -Tail 20"
+    echo          ------------------------------------------------
     call :log "FATAL: npm install failed rc=!RC!"
     exit /b 1
 )
@@ -592,7 +703,7 @@ echo          [OK] Frontend dependencies installed.
 exit /b 0
 
 :: ============================================================
-:: WAIT FOR READY  (up to 300s for first-run npm install)
+:: WAIT FOR READY
 :: ============================================================
 :WAIT_FOR_READY
 color 0B
@@ -794,22 +905,12 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: Python detection
-::
-:: ULPF supports Python 3.10, 3.11, and 3.12 only.
-:: If multiple versions are installed, the newest supported one
-:: is picked automatically. Lookup order:
-::   1. py launcher: py -3.12, then py -3.11, then py -3.10
-::   2. bare "python" on PATH, but only if it's 3.10/3.11/3.12
-::   3. bare "python3" on PATH, same constraint
-::
-:: The chosen launcher is stored in PY_LAUNCHER and reused
-:: everywhere a Python command is run.
 :: ------------------------------------------------------------
 :check_python
 set "PY_LAUNCHER="
 set "PY_VER="
 
-:: 1. Try the py launcher for each supported version, newest first
+:: 1. Try the py launcher, newest supported first
 for %%V in (3.12 3.11 3.10) do (
     if "!PY_LAUNCHER!"=="" (
         py -%%V --version >nul 2>&1
@@ -834,24 +935,17 @@ echo          [OK] !PY_VER!  ^(launcher: !PY_LAUNCHER!^)
 call :log "Python detected: !PY_VER! via !PY_LAUNCHER!"
 exit /b 0
 
-:: ------------------------------------------------------------
-:: Probe a candidate launcher. Sets PY_LAUNCHER and PY_VER if
-:: the reported version is 3.10, 3.11, or 3.12. No-op otherwise.
-:: ------------------------------------------------------------
 :probe_py
 set "CANDIDATE=%~1"
 set "VER_RAW="
 for /f "tokens=*" %%v in ('%CANDIDATE% --version 2^>nul') do set "VER_RAW=%%v"
 if "!VER_RAW!"=="" exit /b 0
 
-:: Extract "3.X" from "Python 3.X.Y"
 set "VER_NUM=!VER_RAW:Python =!"
 for /f "tokens=1,2 delims=." %%a in ("!VER_NUM!") do (
     set "CAND_MAJOR=%%a"
     set "CAND_MINOR=%%b"
 )
-
-:: Strip trailing non-numeric junk (some launchers append tags)
 for /f "tokens=1 delims= " %%m in ("!CAND_MINOR!") do set "CAND_MINOR=%%m"
 
 if not "!CAND_MAJOR!"=="3" exit /b 0
@@ -979,7 +1073,6 @@ if not exist "!REPO_ROOT!\scripts\ulpf-connector\install_service.py" goto REFRES
 set "CONNECTOR_DIR=!REPO_ROOT!\scripts\ulpf-connector"
 if not exist "!CONNECTOR_CONFIG!" goto REFRESH_CONNECTOR_NO_CONFIG
 
-:: Only re-poll every 30s
 for /f "tokens=*" %%T in ('powershell -NoProfile -Command "[int][double]::Parse((Get-Date -UFormat %%s))"') do set "NOW_TS=%%T"
 set /a SINCE=!NOW_TS!-!SVC_CACHE_TS!
 if !SINCE! LSS 30 if not "!CONNECTOR_STATE!"=="unknown" exit /b 0
