@@ -18,6 +18,10 @@ chcp 65001 >nul 2>&1
 ::    7. Open the browser
 ::    8. Stay open as a control console (type q to quit)
 ::
+::  Supported Python: 3.10, 3.11, 3.12 only.
+::  If multiple versions are installed, the newest supported one
+::  is picked automatically via the py launcher.
+::
 ::  Safe to re-run. Idempotent.
 :: ============================================================
 
@@ -78,6 +82,7 @@ set "CONNECTOR_CONFIG=!CONNECTOR_DATA_DIR!\connector.json"
 set "MODE="
 set "DOCKER_OK=0"
 set "PY_VER="
+set "PY_LAUNCHER="
 set "NODE_VER="
 set "FIRST_RUN=true"
 set "LAST_CHECK=ok"
@@ -186,15 +191,18 @@ echo.
 call :check_python
 call :check_node
 echo.
-if "!PY_VER!"==""  goto LOCAL_NO_PY
-if "!NODE_VER!"=="" goto LOCAL_NO_NODE
+if "!PY_LAUNCHER!"=="" goto LOCAL_NO_PY
+if "!NODE_VER!"==""    goto LOCAL_NO_NODE
 goto MODE_LOCKED
 
 :LOCAL_NO_PY
 color 0C
-echo          [!!] Local mode requires Python 3.10 or newer.
-echo               Install Python from https://www.python.org/downloads/
-echo               and check "Add Python to PATH" during install.
+echo          [!!] Local mode requires Python 3.10, 3.11, or 3.12.
+echo               Python 3.13+ is not yet supported.
+echo.
+echo               Install Python 3.12 from:
+echo                 https://www.python.org/downloads/release/python-3129/
+echo               Check "Add Python to PATH" during install.
 echo.
 echo            [1]  Go back and choose DOCKER mode
 echo            [2]  Exit setup
@@ -365,7 +373,6 @@ exit /b 0
 
 :: ------------------------------------------------------------
 :: Validate migrations don't contain unguarded create_all().
-:: Soft warning only — run continues.
 :: ------------------------------------------------------------
 :validate_migrations
 set "MIG_BAD=0"
@@ -398,8 +405,9 @@ exit /b 0
 if "!ARG_NO_CONNECTOR!"=="1" goto CONNECTOR_SKIPPED
 call :draw_step 3 "Host log connector"
 echo.
-if "!PY_VER!"=="" call :check_python
-if "!PY_VER!"=="" goto CONNECTOR_NO_PY
+:: Connector needs Python even in Docker mode
+if "!PY_LAUNCHER!"=="" call :check_python
+if "!PY_LAUNCHER!"=="" goto CONNECTOR_NO_PY
 if not exist "!REPO_ROOT!\scripts\ulpf-connector\connector.py" goto CONNECTOR_NO_SCRIPTS
 call :setup_connector_service
 call :refresh_connector_state
@@ -414,10 +422,10 @@ goto AFTER_CONNECTOR
 
 :CONNECTOR_NO_PY
 color 0E
-echo          [--] Python not found on host.
-echo               The connector service requires Python 3.10+.
+echo          [--] Python 3.10 / 3.11 / 3.12 not found on host.
+echo               The connector service requires it.
 set "CONNECTOR_STATE=no-python"
-call :log "Connector skipped: no host Python"
+call :log "Connector skipped: no supported host Python"
 goto AFTER_CONNECTOR
 
 :CONNECTOR_NO_SCRIPTS
@@ -535,9 +543,9 @@ call :write_marker
 goto WAIT_FOR_READY
 
 :create_venv
-echo          Creating Python virtual environment...
+echo          Creating Python virtual environment with !PY_LAUNCHER!...
 pushd "!REPO_ROOT!\backend"
-python -m venv venv
+!PY_LAUNCHER! -m venv venv
 set "RC=!ERRORLEVEL!"
 popd
 if not "!RC!"=="0" goto VENV_FAILED
@@ -784,33 +792,82 @@ echo          [--] Docker not found.
 call :log "Docker not found"
 exit /b 0
 
+:: ------------------------------------------------------------
+:: Python detection
+::
+:: ULPF supports Python 3.10, 3.11, and 3.12 only.
+:: If multiple versions are installed, the newest supported one
+:: is picked automatically. Lookup order:
+::   1. py launcher: py -3.12, then py -3.11, then py -3.10
+::   2. bare "python" on PATH, but only if it's 3.10/3.11/3.12
+::   3. bare "python3" on PATH, same constraint
+::
+:: The chosen launcher is stored in PY_LAUNCHER and reused
+:: everywhere a Python command is run.
+:: ------------------------------------------------------------
 :check_python
-python --version >nul 2>&1
-if errorlevel 1 goto CHECK_PY_MISSING
-for /f "tokens=*" %%v in ('python --version 2^>nul') do set "PY_VER=%%v"
-for /f "tokens=2" %%v in ("!PY_VER!") do set "PY_NUM=%%v"
-for /f "tokens=1,2 delims=." %%a in ("!PY_NUM!") do (
-    set "PY_MAJOR=%%a"
-    set "PY_MINOR=%%b"
+set "PY_LAUNCHER="
+set "PY_VER="
+
+:: 1. Try the py launcher for each supported version, newest first
+for %%V in (3.12 3.11 3.10) do (
+    if "!PY_LAUNCHER!"=="" (
+        py -%%V --version >nul 2>&1
+        if not errorlevel 1 call :probe_py "py -%%V"
+    )
 )
-set "PY_OK=1"
-if !PY_MAJOR! LSS 3 set "PY_OK=0"
-if !PY_MAJOR! EQU 3 if !PY_MINOR! LSS 10 set "PY_OK=0"
-if !PY_MAJOR! EQU 3 if !PY_MINOR! GTR 13 set "PY_OK=0"
-if "!PY_OK!"=="0" goto CHECK_PY_RANGE
-echo          [OK] !PY_VER!
-call :log "Python detected: !PY_VER!"
+
+:: 2. Try "python" on PATH
+if "!PY_LAUNCHER!"=="" (
+    python --version >nul 2>&1
+    if not errorlevel 1 call :probe_py "python"
+)
+
+:: 3. Try "python3" on PATH
+if "!PY_LAUNCHER!"=="" (
+    python3 --version >nul 2>&1
+    if not errorlevel 1 call :probe_py "python3"
+)
+
+if "!PY_LAUNCHER!"=="" goto CHECK_PY_MISSING
+echo          [OK] !PY_VER!  ^(launcher: !PY_LAUNCHER!^)
+call :log "Python detected: !PY_VER! via !PY_LAUNCHER!"
 exit /b 0
 
-:CHECK_PY_RANGE
-echo          [!!] !PY_VER! ^(need 3.10-3.13^)
-call :log "Python out of range: !PY_VER!"
-set "PY_VER="
+:: ------------------------------------------------------------
+:: Probe a candidate launcher. Sets PY_LAUNCHER and PY_VER if
+:: the reported version is 3.10, 3.11, or 3.12. No-op otherwise.
+:: ------------------------------------------------------------
+:probe_py
+set "CANDIDATE=%~1"
+set "VER_RAW="
+for /f "tokens=*" %%v in ('%CANDIDATE% --version 2^>nul') do set "VER_RAW=%%v"
+if "!VER_RAW!"=="" exit /b 0
+
+:: Extract "3.X" from "Python 3.X.Y"
+set "VER_NUM=!VER_RAW:Python =!"
+for /f "tokens=1,2 delims=." %%a in ("!VER_NUM!") do (
+    set "CAND_MAJOR=%%a"
+    set "CAND_MINOR=%%b"
+)
+
+:: Strip trailing non-numeric junk (some launchers append tags)
+for /f "tokens=1 delims= " %%m in ("!CAND_MINOR!") do set "CAND_MINOR=%%m"
+
+if not "!CAND_MAJOR!"=="3" exit /b 0
+if "!CAND_MINOR!"=="10" goto PROBE_PY_ACCEPT
+if "!CAND_MINOR!"=="11" goto PROBE_PY_ACCEPT
+if "!CAND_MINOR!"=="12" goto PROBE_PY_ACCEPT
+exit /b 0
+
+:PROBE_PY_ACCEPT
+set "PY_LAUNCHER=!CANDIDATE!"
+set "PY_VER=!VER_RAW!"
 exit /b 0
 
 :CHECK_PY_MISSING
-echo          [--] Python not found.
-call :log "Python not found"
+echo          [--] Python 3.10 / 3.11 / 3.12 not found.
+call :log "Python not found (3.10-3.12 required)"
 exit /b 0
 
 :check_node
@@ -904,20 +961,20 @@ echo          [OK] Wrote default connector config.
 exit /b 0
 
 :fix_connector_config
-python "!CONNECTOR_DIR!\fix_config.py" --path "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
+!PY_LAUNCHER! "!CONNECTOR_DIR!\fix_config.py" --path "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
 echo          [OK] Connector config normalized.
 exit /b 0
 
 :query_connector_status
 set "SVC_LINE="
-python "!CONNECTOR_DIR!\install_service.py" --status --config "!CONNECTOR_CONFIG!" >"%TEMP%\ulpf_svc.txt" 2>&1
+!PY_LAUNCHER! "!CONNECTOR_DIR!\install_service.py" --status --config "!CONNECTOR_CONFIG!" >"%TEMP%\ulpf_svc.txt" 2>&1
 set "SVC_RC=!ERRORLEVEL!"
 for /f "usebackq tokens=*" %%L in ("%TEMP%\ulpf_svc.txt") do set "SVC_LINE=%%L"
 del "%TEMP%\ulpf_svc.txt" >nul 2>&1
 exit /b 0
 
 :refresh_connector_state
-if "!PY_VER!"=="" goto REFRESH_CONNECTOR_NO_PY
+if "!PY_LAUNCHER!"=="" goto REFRESH_CONNECTOR_NO_PY
 if not exist "!REPO_ROOT!\scripts\ulpf-connector\install_service.py" goto REFRESH_CONNECTOR_NO_SCRIPTS
 set "CONNECTOR_DIR=!REPO_ROOT!\scripts\ulpf-connector"
 if not exist "!CONNECTOR_CONFIG!" goto REFRESH_CONNECTOR_NO_CONFIG
@@ -928,7 +985,7 @@ set /a SINCE=!NOW_TS!-!SVC_CACHE_TS!
 if !SINCE! LSS 30 if not "!CONNECTOR_STATE!"=="unknown" exit /b 0
 
 set "SVC_LINE="
-python "!CONNECTOR_DIR!\install_service.py" --status --config "!CONNECTOR_CONFIG!" >"%TEMP%\ulpf_svc2.txt" 2>&1
+!PY_LAUNCHER! "!CONNECTOR_DIR!\install_service.py" --status --config "!CONNECTOR_CONFIG!" >"%TEMP%\ulpf_svc2.txt" 2>&1
 set "SVC_RC=!ERRORLEVEL!"
 for /f "usebackq tokens=*" %%L in ("%TEMP%\ulpf_svc2.txt") do set "SVC_LINE=%%L"
 del "%TEMP%\ulpf_svc2.txt" >nul 2>&1
@@ -953,7 +1010,7 @@ set "CONNECTOR_STATE=-- not installed"
 exit /b 0
 
 :REFRESH_CONNECTOR_NO_PY
-set "CONNECTOR_STATE=-- no host Python"
+set "CONNECTOR_STATE=-- no supported host Python"
 exit /b 0
 
 :REFRESH_CONNECTOR_NO_SCRIPTS
@@ -970,7 +1027,7 @@ exit /b 0
 
 :CONNECTOR_INSTALL
 echo          Installing / starting connector service...
-python "!CONNECTOR_DIR!\install_service.py" --config "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
+!PY_LAUNCHER! "!CONNECTOR_DIR!\install_service.py" --config "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
 set "INST_RC=!ERRORLEVEL!"
 call :log "Connector install rc=!INST_RC!"
 if "!INST_RC!"=="0" goto CONNECTOR_INSTALL_VERIFY
@@ -978,7 +1035,7 @@ if "!INST_RC!"=="0" goto CONNECTOR_INSTALL_VERIFY
 echo          [!!] First attempt failed ^(rc=!INST_RC!^). Retrying once...
 call :log "Connector install failed rc=!INST_RC! - retrying once"
 timeout /t 2 /nobreak >nul
-python "!CONNECTOR_DIR!\install_service.py" --config "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
+!PY_LAUNCHER! "!CONNECTOR_DIR!\install_service.py" --config "!CONNECTOR_CONFIG!" >>"%INSTALL_LOG%" 2>&1
 set "INST_RC=!ERRORLEVEL!"
 call :log "Connector install (retry) rc=!INST_RC!"
 if "!INST_RC!"=="0" goto CONNECTOR_INSTALL_VERIFY
@@ -1001,7 +1058,7 @@ if !VWAIT! LSS 15 goto CONNECTOR_VERIFY_LOOP
 color 0E
 echo          [!!] Task installed but the process did not report running after !VWAIT!s.
 echo               Re-run manually to see the error:
-echo                 python "!CONNECTOR_DIR!\connector.py" --config "!CONNECTOR_CONFIG!"
+echo                 !PY_LAUNCHER! "!CONNECTOR_DIR!\connector.py" --config "!CONNECTOR_CONFIG!"
 call :log "Connector task not running after !VWAIT!s: !SVC_LINE!"
 color 0B
 exit /b 0
@@ -1057,6 +1114,7 @@ for /f "usebackq tokens=*" %%H in (`powershell -NoProfile -Command "if (Test-Pat
     echo   "repo_root": "!REPO_ROOT!",
     echo   "docker_available": "!DOCKER_OK!",
     echo   "python_version": "!PY_VER!",
+    echo   "python_launcher": "!PY_LAUNCHER!",
     echo   "node_version": "!NODE_VER!",
     echo   "requirements_sha": "!REQ_SHA!",
     echo   "compose_sha": "!COMPOSE_SHA!",
