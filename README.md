@@ -390,5 +390,5 @@ docker compose up -d --build
 ---
 
 <div align="center">
-  <sub>Built with pride for Smart India Hackathon 2024 by <b>Team BEETLES</b>.</sub>
+  <sub>Built with pride for Smart India Hackathon 2026 by <b>Team BEETLES</b>.</sub>
 </div>
