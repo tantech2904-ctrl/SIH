@@ -14,7 +14,9 @@ That's it. The script does everything else.
 
 1. **Checks** whether you have Docker installed.
 2. **If you have Docker** — it runs ULPF entirely in containers. Nothing
-   else needs to be installed. This is the recommended path.
+   else needs to be installed. This is the recommended path. Just make 
+   sure to keep it running/open in the background, before running the 
+   script.
 3. **If you don't have Docker** — it offers to open the Docker Desktop
    download page, or to run ULPF in **local mode** using your existing
    Python and Node installations.
