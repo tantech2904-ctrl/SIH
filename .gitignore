@@ -10,6 +10,8 @@
 .env.*
 !.env.example
 !.env.local.example
+!.env.docker
+!.env.local
 .env.live
 .env.bak.*
 *.pem
