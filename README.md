@@ -283,7 +283,7 @@ The original hackathon problem statement primarily focused on building a Unified
 
 5. **Cost-Free Sovereign Cloud Blueprint for Public Sector & MSMEs**:
    - Commercial enterprise SIEM solutions (Splunk, Datadog, Microsoft Sentinel) carry exorbitant licensing and cloud egress costs.
-   - We engineered and validated ULPF specifically to run comfortably on **Oracle Cloud Infrastructure (OCI) Always Free Tier** (4 OCPU Ampere A1 compute, 24 GB RAM, 200 GB block storage). This proves that government bodies, defense teams, law enforcement, and MSMEs can deploy an enterprise-grade, high-throughput SIEM pipeline with **₹0 cloud hosting costs**.
+   - We engineered and validated ULPF specifically to run comfortably on **Oracle Cloud Infrastructure (OCI) Always Free Tier** (1 OCPU, 1 GB RAM). This proves that government bodies, defense teams, law enforcement, and MSMEs can deploy an enterprise-grade, high-throughput SIEM pipeline with **₹0 cloud hosting costs**.
 
 ---
 
