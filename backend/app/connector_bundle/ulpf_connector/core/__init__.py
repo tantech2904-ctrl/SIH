@@ -1,0 +1,1 @@
+"""Connector core: HTTP client, config, queue, logging, service management."""

@@ -325,7 +325,21 @@ function MappingsTab({ event }: { event: any }) {
 }
 
 function EnrichmentTab({ id }: { id: string }) {
-  const { data, isLoading, error } = useEventEnrichment(id);
+  const [refreshing, setRefreshing] = useState(false);
+  const { data, isLoading, error, refetch } = useEventEnrichment(id);
+
+  const handleRerun = async () => {
+    setRefreshing(true);
+    try {
+      await api.rerunEnrichment(id);
+      await refetch();
+    } catch (e) {
+      console.error("Failed to rerun enrichment", e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   if (isLoading) return <Loading />;
   if (error) return <ErrorBox error={error} />;
   if (!data) return <EmptyState message="No enrichment data" />;
@@ -333,14 +347,24 @@ function EnrichmentTab({ id }: { id: string }) {
   const indicators = data.indicators || [];
   return (
     <div className="space-y-3 text-xs">
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(providers).map(([p, v]: any) => (
-          <div key={p} className="panel px-2 py-1 text-2xs flex items-center gap-2">
-            <span className="font-semibold">{p}</span>
-            <span className={providerStatusColor(v.status)}>{v.status}</span>
-            <span className="text-soc-textDim">({v.count})</span>
-          </div>
-        ))}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(providers).map(([p, v]: any) => (
+            <div key={p} className="panel px-2 py-1 text-2xs flex items-center gap-2">
+              <span className="font-semibold">{p}</span>
+              <span className={providerStatusColor(v.status)}>{v.status}</span>
+              <span className="text-soc-textDim">({v.count})</span>
+            </div>
+          ))}
+        </div>
+        <button
+          className="btn btn-secondary text-2xs flex items-center gap-1.5 py-1 px-2.5 rounded-lg"
+          onClick={handleRerun}
+          disabled={refreshing}
+        >
+          <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Enriching..." : "Re-enrich Event"}
+        </button>
       </div>
       {indicators.length === 0 ? <EmptyState message="No indicators extracted" /> : null}
       {indicators.map((ind: any, i: number) => (

@@ -145,6 +145,10 @@ export const api = {
 
   // Connectors
   listConnectors: () => request<ConnectorList>("/connectors"),
+  connectorScriptUrl: (os: "windows" | "linux" | "macos") =>
+    `${API_BASE}/connectors/download/script?os=${os}`,
+  connectorBundleUrl: (os: "windows" | "linux" | "macos") =>
+    `${API_BASE}/connectors/download/bundle?os=${os}`,
   getConnectorConfig: (id: string) =>
     request<ConnectorConfig>(`/connectors/${id}/config`),
   setConnectorConfig: (
@@ -276,7 +280,10 @@ export const api = {
     request<{ deleted: boolean; parser_id: string }>(`/parsers/${id}`, { method: "DELETE" }),
 
   // Enrichment
-  getEnrichment: (eventId: string) => request<any>(`/enrichment/${eventId}`),
+  getEnrichment: (eventId: string, refresh = false) =>
+    request<any>(`/enrichment/${eventId}${refresh ? "?refresh=true" : ""}`),
+  rerunEnrichment: (eventId: string) =>
+    request<any>(`/enrichment/${eventId}/rerun`, { method: "POST" }),
   providersStatus: () =>
     request<{ providers: ProviderStatus[] }>("/enrichment/providers/status"),
 

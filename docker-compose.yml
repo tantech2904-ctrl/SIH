@@ -96,6 +96,11 @@ services:
       MINIO_SECRET_KEY: ulpfadminsecret
       MINIO_BUCKET: ulpf-raw
       MINIO_SECURE: "false"
+      IN_DOCKER: "true"
+      ULPF_ENV_LIVE: /app/.env.live
+    volumes:
+      - ./logs:/app/logs:ro
+      - ./.env:/app/.env.live:ro
     depends_on:
       backend:
         condition: service_started

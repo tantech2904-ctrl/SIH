@@ -1,0 +1,12 @@
+# Core (always required)
+httpx>=0.27,<1.0
+
+# Optional per-OS extras — install what applies to your host.
+#
+# Windows (native Event Log subscription, faster than the wevtutil fallback):
+#   pip install pywin32
+#
+# Linux (native journald subscription, faster than the journalctl fallback):
+#   pip install systemd-python
+#
+# macOS: no optional dependency — uses the built-in `log` command.

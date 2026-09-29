@@ -6,6 +6,7 @@ in .env enables file upload, but the core platform does not perform uploads.
 """
 from __future__ import annotations
 
+import ipaddress
 import httpx
 
 from app.core.config import settings
@@ -16,6 +17,14 @@ from app.enrichment.base import ProviderResult, ThreatIntelProvider
 VT_BASE = "https://www.virustotal.com/api/v3"
 
 
+def is_private_ip(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str.strip())
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified
+    except ValueError:
+        return False
+
+
 class VirusTotalProvider(ThreatIntelProvider):
     name = "VirusTotal"
     indicator_types = ("ip", "domain", "url", "hash")
@@ -24,6 +33,9 @@ class VirusTotalProvider(ThreatIntelProvider):
         return bool(settings.VIRUSTOTAL_ENABLED and settings.VIRUSTOTAL_API_KEY)
 
     def lookup(self, indicator: str, indicator_type: str) -> ProviderResult:
+        if indicator_type == "ip" and is_private_ip(indicator):
+            return ProviderResult(self.name, indicator, indicator_type, "SKIPPED",
+                                   {"reason": "private_or_loopback_ip"})
         if indicator_type == "ip":
             path = f"/ip_addresses/{indicator}"
         elif indicator_type == "domain":

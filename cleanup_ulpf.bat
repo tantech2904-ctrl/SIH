@@ -4,30 +4,26 @@ title ULPF Cleanup
 color 0E
 chcp 65001 >nul 2>&1
 
-:: ============================================================
-::  ULPF - Cleanup / Reset Script
-::
-::  Removes:
-::    - Docker containers, volumes, networks, images
-::    - The connector scheduled task
-::    - Connector config (C:\ProgramData\ULPF)
-::    - User state (%USERPROFILE%\.ulpf)
-::    - .env and .env backups (keeps .env.example)
-::    - backend\venv and frontend\node_modules
-::    - Local SQLite databases (backend\*.db)
-::    - Python caches (__pycache__, .pytest_cache, etc)
-::
-::  Does NOT touch:
-::    - Source code, git history, README files
-::    - .env.example, scripts\.env.local.example
-::    - config.example.json
-::
-::  Requires Administrator (for scheduled task deletion).
-::
-::  Verification uses NO pipes inside for /f substitutions —
-::  the previous version crashed with "| was unexpected at this
-::  time." because of `for /f ... in (`cmd | filter`)`.
-:: ============================================================
+REM ============================================================
+REM  ULPF - Cleanup / Reset Script
+REM
+REM  Removes:
+REM    - Docker containers, volumes, networks, images
+REM    - The connector scheduled task
+REM    - Connector config (C:\ProgramData\ULPF)
+REM    - User state (%USERPROFILE%\.ulpf)
+REM    - .env and .env backups (keeps .env.example)
+REM    - backend\venv and frontend\node_modules
+REM    - Local SQLite databases (backend\*.db)
+REM    - Python caches (__pycache__, .pytest_cache, etc)
+REM
+REM  Does NOT touch:
+REM    - Source code, git history, README files
+REM    - .env.example, scripts\.env.local.example
+REM    - config.example.json
+REM
+REM  Requires Administrator (for scheduled task deletion).
+REM ============================================================
 
 :: -------------------- Elevation --------------------
 net session >nul 2>&1
@@ -129,22 +125,43 @@ docker builder prune -f >nul 2>&1
 call :say "  done"
 
 :: ============================================================
-:: 2. Connector scheduled task
+:: 2. Connector processes & scheduled task
 :: ============================================================
+call :say "Stopping running connector processes"
+schtasks /End /TN "ULPF\Connector" >nul 2>&1
+schtasks /End /TN "\ULPF\Connector" >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Connector*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Host Log Connector*" /T /F >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*connector.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+call :say "  done"
+
 call :say "Removing connector scheduled task"
+schtasks /Delete /TN "ULPF\Connector" /F >nul 2>&1
 schtasks /Delete /TN "\ULPF\Connector" /F >nul 2>&1
+schtasks /Delete /TN "ULPF" /F >nul 2>&1
 schtasks /Delete /TN "\ULPF" /F >nul 2>&1
 call :say "  done"
 
 :: ============================================================
-:: 3. Connector state directories
+:: 3. Connector state directories & artifacts
 :: ============================================================
 call :say "Removing C:\ProgramData\ULPF"
 if exist "!CONNECTOR_DATA_DIR!" rmdir /s /q "!CONNECTOR_DATA_DIR!" >nul 2>&1
 call :say "  done"
 
-call :say "Removing %USERPROFILE%\.ulpf"
+call :say "Removing %USERPROFILE%\.ulpf and .ulpf-connector"
 if exist "!ULPF_HOME!" rmdir /s /q "!ULPF_HOME!" >nul 2>&1
+if exist "%USERPROFILE%\.ulpf-connector" rmdir /s /q "%USERPROFILE%\.ulpf-connector" >nul 2>&1
+call :say "  done"
+
+call :say "Removing connector runtime files"
+if exist "!REPO_ROOT!\scripts\ulpf-connector" (
+    del /q "!REPO_ROOT!\scripts\ulpf-connector\*.log" >nul 2>&1
+    del /q "!REPO_ROOT!\scripts\ulpf-connector\*.jsonl" >nul 2>&1
+    del /q "!REPO_ROOT!\scripts\ulpf-connector\*.bookmark*" >nul 2>&1
+    del /q "!REPO_ROOT!\scripts\ulpf-connector\spool*" >nul 2>&1
+)
+del /q "%TEMP%\ulpf*" >nul 2>&1
 call :say "  done"
 
 :: ============================================================
@@ -235,6 +252,7 @@ call :verify_docker_volume "ulpf_pg"
 call :verify_docker_volume "ulpf_minio"
 call :verify_docker_image "ulpf"
 call :verify_schtasks
+call :verify_connector_process
 call :verify_path "C:\ProgramData\ULPF"
 call :verify_path "!ULPF_HOME!"
 call :verify_path "!REPO_ROOT!\.env"
@@ -320,11 +338,23 @@ if "!FOUND!"=="" (
 exit /b 0
 
 :verify_schtasks
-schtasks /Query /TN "\ULPF\Connector" >nul 2>&1
+schtasks /Query /TN "ULPF\Connector" >nul 2>&1
 if errorlevel 1 (
-    echo   [OK]   Scheduled task ULPF\Connector  ^(removed^)
+    schtasks /Query /TN "\ULPF\Connector" >nul 2>&1
+    if errorlevel 1 (
+        echo   [OK]   Scheduled task ULPF\Connector  ^(removed^)
+        exit /b 0
+    )
+)
+echo   [!!]   Scheduled task ULPF\Connector  ^(still present^)
+exit /b 0
+
+:verify_connector_process
+powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*connector.py*' }; if ($p) { exit 1 } else { exit 0 }" >nul 2>&1
+if errorlevel 1 (
+    echo   [!!]   Connector process  ^(still running^)
 ) else (
-    echo   [!!]   Scheduled task ULPF\Connector  ^(still present^)
+    echo   [OK]   Connector process  ^(terminated^)
 )
 exit /b 0
 

@@ -182,6 +182,8 @@ goto CONTROL_TICK
 color 0E
 cls
 echo.
+echo   Stopping host log connector...
+call :stop_connector
 echo   Stopping Docker stack...
 docker compose down
 color 0A
@@ -189,6 +191,14 @@ echo.
 echo   ULPF stopped. Closing in 3 seconds.
 timeout /t 3 /nobreak >nul
 exit
+
+:stop_connector
+schtasks /End /TN "ULPF\Connector" >nul 2>&1
+schtasks /End /TN "\ULPF\Connector" >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Connector*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Host Log Connector*" /T /F >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*connector.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+exit /b 0
 
 :: ============================================================
 :: HELPERS

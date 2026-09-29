@@ -42,6 +42,17 @@ def _default_providers() -> list[ThreatIntelProvider]:
 def extract_indicators(cse: dict) -> list[tuple[str, str]]:
     """Return list of (indicator, type) pairs from a normalized CSE."""
     out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(val, itype):
+        if val is None:
+            return
+        s = str(val).strip()
+        if not s or s.lower() in ("none", "null", "—", "-") or s in seen:
+            return
+        seen.add(s)
+        out.append((s, itype))
+
     for path, itype in (
         ("source.ip", "ip"),
         ("destination.ip", "ip"),
@@ -52,7 +63,32 @@ def extract_indicators(cse: dict) -> list[tuple[str, str]]:
     ):
         v = cse.get(path)
         if v:
-            out.append((str(v), itype))
+            _add(v, itype)
+
+    src = cse.get("source")
+    if isinstance(src, dict) and src.get("ip"):
+        _add(src.get("ip"), "ip")
+
+    dst = cse.get("destination")
+    if isinstance(dst, dict) and dst.get("ip"):
+        _add(dst.get("ip"), "ip")
+
+    ext = cse.get("extensions")
+    if isinstance(ext, dict):
+        for k, itype in (
+            ("ip", "ip"),
+            ("domain", "domain"),
+            ("url", "url"),
+            ("file_hash", "hash"),
+            ("sha256", "hash"),
+            ("md5", "hash"),
+            ("hash", "hash"),
+            ("hostname", "domain"),
+            ("host", "domain"),
+        ):
+            if ext.get(k):
+                _add(ext.get(k), itype)
+
     return out
 
 

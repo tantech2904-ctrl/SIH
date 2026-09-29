@@ -18,6 +18,11 @@ log = get_logger(__name__)
 
 @celery_app.task(name="ulpf.enrich_event", bind=True, max_retries=2, default_retry_delay=15)
 def enrich_event_task(self, event_id: str):
+    from app.core.config import reload_settings
+    try:
+        reload_settings()
+    except Exception:
+        pass
     db = SessionLocal()
     try:
         c = db.query(CanonicalEvent).filter(CanonicalEvent.event_id == event_id).first()

@@ -6,10 +6,14 @@ GET  /connectors/{id}/config            — connector polls for desired state
 POST /connectors/{id}/config            — UI sets desired state
 """
 
+import io
 import uuid
+import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_analyst, get_current_user
@@ -193,3 +197,140 @@ def set_connector_config(
         desired_adapters=row.desired_adapters,
         poll_interval_s=row.config_poll_interval_s,
     )
+
+
+# ------------------------------------------------------------------ downloads
+
+def _get_server_url(request: Request) -> str:
+    target = request.query_params.get("server_url")
+    if target:
+        return target.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if not host:
+        host = f"{request.url.hostname}:{request.url.port}"
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _find_bundle_dir() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[2] / "connector_bundle",
+        Path(__file__).resolve().parent.parent / "connector_bundle",
+        Path(__file__).resolve().parents[4] / "scripts" / "ulpf-connector",
+        Path("/app/app/connector_bundle"),
+        Path("/app/scripts/ulpf-connector"),
+    ]
+    for c in candidates:
+        if c.exists() and (c / "connector.py").exists():
+            return c
+    return candidates[0]
+
+
+@router.get("/download/script")
+def download_connector_script(request: Request, os: str = "windows"):
+    """Download single runner script (run_connector.bat, run_connector.sh, or run_connector_mac.sh)."""
+    server_url = _get_server_url(request)
+    bundle_dir = _find_bundle_dir()
+    os_clean = os.lower().strip()
+
+    if os_clean in ("linux", "sh"):
+        filename = "run_connector.sh"
+        media_type = "text/x-shellscript"
+    elif os_clean in ("mac", "macos", "apple"):
+        filename = "run_connector_mac.sh"
+        media_type = "text/x-shellscript"
+    else:
+        filename = "run_connector.bat"
+        media_type = "application/x-bat"
+
+    file_path = bundle_dir / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Script {filename} not found")
+
+    content = file_path.read_text(encoding="utf-8", errors="replace")
+    content = content.replace("http://localhost:8000", server_url)
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/download/bundle")
+def download_connector_bundle(request: Request, os: str = "windows"):
+    """Download tailored zip package containing connector agent and runner."""
+    server_url = _get_server_url(request)
+    bundle_dir = _find_bundle_dir()
+    if not bundle_dir.exists():
+        raise HTTPException(status_code=404, detail="Connector bundle directory not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in bundle_dir.rglob("*"):
+            if not file.is_file():
+                continue
+            if "__pycache__" in file.parts or ".pytest_cache" in file.parts or file.suffix == ".pyc":
+                continue
+            rel_path = file.relative_to(bundle_dir)
+
+            try:
+                text_content = file.read_text(encoding="utf-8")
+                if file.name.endswith((".json", ".bat", ".sh", ".py")):
+                    text_content = text_content.replace("http://localhost:8000", server_url)
+                zf.writestr(str(rel_path), text_content)
+            except Exception:
+                zf.write(file, str(rel_path))
+
+    buf.seek(0)
+    target_name = f"ulpf-connector-{os.lower()}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{target_name}"'},
+    )
+
+
+@router.get("/install.sh")
+def install_sh(request: Request):
+    """One-line curl installer for Linux / macOS."""
+    server_url = _get_server_url(request)
+    script = f"""#!/usr/bin/env bash
+set -e
+echo "=== ULPF Remote Connector Installer ==="
+INSTALL_DIR="$HOME/.ulpf-connector"
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+echo "[*] Downloading connector bundle from {server_url}..."
+curl -fsSL "{server_url}/api/v1/connectors/download/bundle?os=linux" -o bundle.zip
+unzip -q -o bundle.zip
+rm -f bundle.zip
+chmod +x run_connector.sh run_connector_mac.sh 2>/dev/null || true
+echo "[*] Launching connector..."
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    exec ./run_connector_mac.sh
+else
+    exec ./run_connector.sh
+fi
+"""
+    return PlainTextResponse(script)
+
+
+@router.get("/install.ps1")
+def install_ps1(request: Request):
+    """One-line PowerShell installer for Windows."""
+    server_url = _get_server_url(request)
+    script = f"""# ULPF Windows Connector One-Line Installer
+$ProgressPreference = 'SilentlyContinue'
+Write-Host "=== ULPF Windows Connector Installer ===" -ForegroundColor Cyan
+$installDir = "$HOME\\.ulpf-connector"
+if (!(Test-Path $installDir)) {{ New-Item -ItemType Directory -Path $installDir -Force | Out-Null }}
+Set-Location $installDir
+Write-Host "[*] Downloading connector bundle from {server_url}..." -ForegroundColor Yellow
+Invoke-WebRequest -Uri "{server_url}/api/v1/connectors/download/bundle?os=windows" -OutFile "$installDir\\bundle.zip" -UseBasicParsing
+Expand-Archive -Path "$installDir\\bundle.zip" -DestinationPath $installDir -Force
+Remove-Item "$installDir\\bundle.zip" -Force
+Write-Host "[*] Starting ULPF Connector..." -ForegroundColor Green
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c run_connector.bat"
+"""
+    return PlainTextResponse(script)

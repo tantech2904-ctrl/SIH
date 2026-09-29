@@ -297,6 +297,11 @@ timeout /t 3 /nobreak >nul
 exit
 
 :shutdown_now
+schtasks /End /TN "ULPF\Connector" >nul 2>&1
+schtasks /End /TN "\ULPF\Connector" >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Connector*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq ULPF Host Log Connector*" /T /F >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*connector.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
 taskkill /FI "WINDOWTITLE eq ULPF Backend*" /T >nul 2>&1
 taskkill /FI "WINDOWTITLE eq ULPF Frontend*" /T >nul 2>&1
 timeout /t 2 /nobreak >nul
