@@ -14,6 +14,7 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     incident_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text, default="")
     severity: Mapped[str] = mapped_column(String(16), default="MEDIUM", index=True)

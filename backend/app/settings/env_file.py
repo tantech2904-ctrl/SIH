@@ -16,8 +16,16 @@ def read_env_file(path: str | Path) -> dict[str, str]:
     p = Path(path)
     if not p.exists():
         return {}
+    if p.is_dir():
+        p = p / ".env"
+        if not p.exists() or not p.is_file():
+            return {}
     out: dict[str, str] = {}
-    for raw in p.read_text(encoding="utf-8").splitlines():
+    try:
+        content = p.read_text(encoding="utf-8")
+    except (IsADirectoryError, PermissionError, OSError):
+        return {}
+    for raw in content.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -57,6 +65,8 @@ def update_env_file(path: str | Path, updates: dict[str, str]) -> None:
     non-atomic window is negligible.
     """
     p = Path(path)
+    if p.exists() and p.is_dir():
+        p = p / ".env"
     original: list[str] = []
     if p.exists():
         original = p.read_text(encoding="utf-8").splitlines()

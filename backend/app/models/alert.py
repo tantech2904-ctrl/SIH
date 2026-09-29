@@ -14,6 +14,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     alert_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     event_id: Mapped[str] = mapped_column(String(36), index=True)
     rule_id: Mapped[str] = mapped_column(String(64), index=True)
     rule_name: Mapped[str] = mapped_column(String(255))

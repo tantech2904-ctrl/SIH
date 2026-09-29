@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_analyst
+from app.api.deps import get_current_user, require_analyst, get_effective_tenant_id
 from app.db.session import get_db
 from app.models.alert import Alert
 from app.models.incident import Incident
@@ -18,6 +18,7 @@ router = APIRouter()
 
 @router.get("")
 def list_incidents(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     status: str | None = None,
@@ -25,7 +26,10 @@ def list_incidents(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     q = db.query(Incident)
+    if tenant_id != "*":
+        q = q.filter(Incident.tenant_id == tenant_id)
     if status:
         q = q.filter(Incident.status == status.upper())
     if severity:
@@ -39,10 +43,15 @@ def list_incidents(
 
 
 @router.get("/{incident_id}")
-def get_incident(incident_id: str, db: Session = Depends(get_db),
-                 user: User = Depends(get_current_user)):
+def get_incident(
+    request: Request,
+    incident_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(Incident).filter(Incident.incident_id == incident_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Incident not found")
     return _dict(r)
 
@@ -54,8 +63,10 @@ def create_incident(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     inc = Incident(
         incident_id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
         title=body.get("title", "Untitled incident"),
         description=body.get("description", ""),
         severity=body.get("severity", "MEDIUM").upper(),
@@ -69,7 +80,7 @@ def create_incident(
     )
     db.add(inc)
     record_audit(db, actor=user.email, action="INCIDENT_CREATE", resource="incident",
-                 resource_id=inc.incident_id, new_state={"title": inc.title})
+                 resource_id=inc.incident_id, tenant_id=tenant_id, new_state={"title": inc.title})
     db.commit()
     return _dict(inc)
 
@@ -82,8 +93,9 @@ def set_status(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(Incident).filter(Incident.incident_id == incident_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Incident not found")
     status = (body.get("status") or "").upper()
     if status not in ("OPEN", "INVESTIGATING", "CONTAINED", "RESOLVED", "FALSE_POSITIVE"):
@@ -92,7 +104,7 @@ def set_status(
     r.status = status
     r.updated_at = datetime.now(timezone.utc)
     record_audit(db, actor=user.email, action="INCIDENT_STATUS", resource="incident",
-                 resource_id=incident_id, previous_state={"status": prev}, new_state={"status": status})
+                 resource_id=incident_id, tenant_id=tenant_id, previous_state={"status": prev}, new_state={"status": status})
     db.commit()
     return _dict(r)
 
@@ -105,15 +117,16 @@ def add_note(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(Incident).filter(Incident.incident_id == incident_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Incident not found")
     note = {"author": user.email, "text": body.get("text", ""),
             "at": datetime.now(timezone.utc).isoformat()}
     r.notes = list(r.notes or []) + [note]
     r.updated_at = datetime.now(timezone.utc)
     record_audit(db, actor=user.email, action="INCIDENT_NOTE", resource="incident",
-                 resource_id=incident_id, new_state={"note": note["text"][:200]})
+                 resource_id=incident_id, tenant_id=tenant_id, new_state={"note": note["text"][:200]})
     db.commit()
     return _dict(r)
 

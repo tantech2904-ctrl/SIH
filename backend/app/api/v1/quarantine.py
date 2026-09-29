@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_analyst, require_admin
+from app.api.deps import get_current_user, require_analyst, require_admin, get_effective_tenant_id
 from app.core.rate_limit import limiter
 from app.core.config import settings
 from app.db.session import get_db
@@ -22,6 +22,7 @@ router = APIRouter()
 
 @router.get("")
 def list_quarantine(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     status: str | None = None,
@@ -30,7 +31,10 @@ def list_quarantine(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     query = db.query(QuarantineEvent)
+    if tenant_id != "*":
+        query = query.filter(QuarantineEvent.tenant_id == tenant_id)
     if status:
         query = query.filter(QuarantineEvent.status == status.upper())
     if reason:
@@ -53,10 +57,15 @@ def list_quarantine(
 
 
 @router.get("/{quarantine_id}")
-def get_quarantine(quarantine_id: str, db: Session = Depends(get_db),
-                   user: User = Depends(get_current_user)):
+def get_quarantine(
+    request: Request,
+    quarantine_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(QuarantineEvent).filter(QuarantineEvent.id == quarantine_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Quarantine entry not found")
     return {
         "id": r.id, "event_id": r.event_id, "reason": r.reason, "stage": r.stage,
@@ -70,10 +79,15 @@ def get_quarantine(quarantine_id: str, db: Session = Depends(get_db),
 
 
 @router.get("/{quarantine_id}/analysis")
-def get_analysis(quarantine_id: str, db: Session = Depends(get_db),
-                 user: User = Depends(get_current_user)):
+def get_analysis(
+    request: Request,
+    quarantine_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(QuarantineEvent).filter(QuarantineEvent.id == quarantine_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Not found")
     # Re-derive current analysis from preserved raw bytes
     ev = db.query(Event).filter(Event.event_id == r.event_id).first()
@@ -114,8 +128,9 @@ def approve_mapping(
 ):
     """Approve a set of analyzer-suggested field mappings and register them
     as analyst-approved mappings for the parser of the quarantined event."""
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(QuarantineEvent).filter(QuarantineEvent.id == quarantine_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Quarantine not found")
     ev = db.query(Event).filter(Event.event_id == r.event_id).first()
     if not ev or not ev.parser_id:
@@ -135,6 +150,7 @@ def approve_mapping(
         if not of or not cf:
             continue
         existing = db.query(FieldMapping).filter(
+            FieldMapping.tenant_id == tenant_id,
             FieldMapping.parser_id == ev.parser_id,
             FieldMapping.original_field == of,
         ).first()
@@ -147,6 +163,7 @@ def approve_mapping(
             continue
         db.add(FieldMapping(
             id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
             parser_id=ev.parser_id,
             parser_version=ev.parser_version or "1.0.0",
             original_field=of,
@@ -159,7 +176,7 @@ def approve_mapping(
         created.append(of)
 
     record_audit(db, actor=user.email, action="MAPPING_APPROVED", resource="quarantine",
-                 resource_id=quarantine_id, new_state={"mappings": created})
+                 resource_id=quarantine_id, tenant_id=tenant_id, new_state={"mappings": created})
     db.commit()
     return {"approved": created}
 
@@ -173,8 +190,9 @@ def replay_quarantine(
     user: User = Depends(require_analyst),
     parser_id: str | None = Query(None),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(QuarantineEvent).filter(QuarantineEvent.id == quarantine_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Quarantine not found")
     ev = db.query(Event).filter(Event.event_id == r.event_id).first()
     if not ev:
@@ -182,7 +200,7 @@ def replay_quarantine(
     run = replay_event(db, event=ev, operator=user.email, parser_id=parser_id, quarantine=r)
     r.retry_count += 1
     record_audit(db, actor=user.email, action="QUARANTINE_REPLAY", resource="quarantine",
-                 resource_id=quarantine_id, new_state={"result": run.result, "status": run.new_status})
+                 resource_id=quarantine_id, tenant_id=tenant_id, new_state={"result": run.result, "status": run.new_status})
     db.commit()
     if run.result == "SUCCESS":
         dispatch_after_commit(db, [ev.event_id])
@@ -191,16 +209,18 @@ def replay_quarantine(
 
 @router.delete("/{quarantine_id}")
 def delete_quarantine(
+    request: Request,
     quarantine_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(QuarantineEvent).filter(QuarantineEvent.id == quarantine_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Not found")
     prev = {"status": r.status, "event_id": r.event_id}
     db.delete(r)
     record_audit(db, actor=user.email, action="QUARANTINE_DELETE", resource="quarantine",
-                 resource_id=quarantine_id, previous_state=prev)
+                 resource_id=quarantine_id, tenant_id=tenant_id, previous_state=prev)
     db.commit()
     return {"deleted": True}

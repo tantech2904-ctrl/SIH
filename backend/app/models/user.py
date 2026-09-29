@@ -37,6 +37,8 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
+    tenant_name: Mapped[str] = mapped_column(String(128), default="Default Workspace", server_default="Default Workspace")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

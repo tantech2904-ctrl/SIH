@@ -131,6 +131,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
+  register: (data: { email: string; password: string; full_name?: string; workspace_name?: string; role?: string }) =>
+    request<TokenResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   logout: () => {
     const rt = localStorage.getItem("ulpf.refresh_token");
     return request<{ status: string }>("/auth/logout", {

@@ -105,12 +105,22 @@ export function Sidebar({ isMobile = false, onCloseMobile }: SidebarProps) {
         }`}
       >
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-soc-accent via-sky-500 to-indigo-600 text-sm font-black text-white shadow-md transition-transform duration-200 hover:scale-105">
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Click to expand sidebar" : "Click to collapse sidebar"}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-soc-accent via-sky-500 to-indigo-600 text-sm font-black text-white shadow-md transition-transform duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+          >
             <Terminal className="h-5 w-5" />
-          </div>
+          </button>
 
           {(!collapsed || isMobile) && (
-            <div className="min-w-0 animate-in fade-in duration-200">
+            <div
+              onClick={toggleCollapse}
+              className="min-w-0 animate-in fade-in duration-200 cursor-pointer select-none"
+              title="Click to toggle sidebar"
+            >
               <div className="text-xs font-black tracking-[0.2em] text-soc-text uppercase truncate">
                 ULPF SecOps
               </div>
@@ -121,20 +131,16 @@ export function Sidebar({ isMobile = false, onCloseMobile }: SidebarProps) {
           )}
         </div>
 
-        {/* Collapse Toggle Button (Desktop Only) */}
-        {!isMobile && (
+        {/* Collapse Button (Shown only when expanded on Desktop to avoid overlap) */}
+        {!isMobile && !collapsed && (
           <button
             type="button"
             onClick={toggleCollapse}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="h-8 w-8 rounded-xl border border-soc-border bg-soc-panelAlt/80 text-soc-textDim hover:text-soc-text hover:border-soc-accent/60 flex items-center justify-center transition-all duration-200"
-            title={collapsed ? "Expand Sidebar (Ctrl+[)" : "Collapse Sidebar (Ctrl+[)"}
+            aria-label="Collapse sidebar"
+            className="h-8 w-8 shrink-0 rounded-xl border border-soc-border bg-soc-panelAlt/80 text-soc-textDim hover:text-soc-text hover:border-soc-accent/60 flex items-center justify-center transition-all duration-200"
+            title="Collapse Sidebar"
           >
-            {collapsed ? (
-              <PanelLeft className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
+            <PanelLeftClose className="h-4 w-4" />
           </button>
         )}
       </div>
@@ -267,8 +273,8 @@ export function Sidebar({ isMobile = false, onCloseMobile }: SidebarProps) {
           </div>
         ) : (
           <>
-            <span className="font-mono tracking-wider font-semibold text-soc-textDim">
-              v0.1.0-PRO
+            <span className="font-mono tracking-wider font-semibold text-soc-accent font-bold">
+              Team BEETLES
             </span>
             <span className="flex items-center gap-1.5 font-medium">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />

@@ -23,6 +23,7 @@ class AuditLog(Base):
     seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     audit_id: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     actor: Mapped[str] = mapped_column(String(255), default="system")
     action: Mapped[str] = mapped_column(String(64), index=True)

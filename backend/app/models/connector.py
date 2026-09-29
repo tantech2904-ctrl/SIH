@@ -33,6 +33,7 @@ class Connector(Base):
     __tablename__ = "connectors"
 
     connector_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     hostname: Mapped[str] = mapped_column(String(255), index=True)
     os: Mapped[str] = mapped_column(String(32), default="unknown")
     version: Mapped[str] = mapped_column(String(32), default="0.0.0")

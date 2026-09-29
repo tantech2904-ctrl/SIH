@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, func, and_, or_
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_analyst
+from app.api.deps import get_current_user, require_analyst, get_effective_tenant_id
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.db.session import get_db
@@ -51,7 +51,10 @@ def list_events(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     query = db.query(Event, CanonicalEvent).outerjoin(CanonicalEvent, Event.event_id == CanonicalEvent.event_id)
+    if tenant_id != "*":
+        query = query.filter(Event.tenant_id == tenant_id)
 
     if severity:
         query = query.filter(CanonicalEvent.severity == severity.upper())
@@ -134,7 +137,10 @@ def export_events(
     Export normalized events and security telemetry tailored for ML/AI threat detection model training.
     Supports JSONL (one JSON object per line, ideal for PyTorch / pandas / HuggingFace), CSV, or standard JSON.
     """
+    tenant_id = get_effective_tenant_id(request, user)
     query = db.query(Event, CanonicalEvent).outerjoin(CanonicalEvent, Event.event_id == CanonicalEvent.event_id)
+    if tenant_id != "*":
+        query = query.filter(Event.tenant_id == tenant_id)
 
     if severity:
         query = query.filter(CanonicalEvent.severity == severity.upper())
@@ -246,10 +252,14 @@ async def stream_events(
     from app.services.event_bus import subscribe
 
     # Prepare filter set for server-side rejection.
+    tenant_id = get_effective_tenant_id(request, user)
     sev = severity.upper() if severity else None
     risk_floor = int(min_risk) if min_risk is not None else None
 
     def _matches(payload: dict) -> bool:
+        msg_tenant = payload.get("tenant_id") or "default"
+        if tenant_id != "*" and msg_tenant != tenant_id:
+            return False
         if sev and (payload.get("severity") or "").upper() != sev:
             return False
         if format and payload.get("detected_format") != format:
@@ -277,19 +287,20 @@ async def stream_events(
             try:
                 from app.services.ingest_service import _sse_payload
 
-                anchor = (
-                    db.query(CanonicalEvent)
-                    .filter(CanonicalEvent.cse_id == last_id)
-                    .first()
-                )
+                anchor_q = db.query(CanonicalEvent).filter(CanonicalEvent.cse_id == last_id)
+                if tenant_id != "*":
+                    anchor_q = anchor_q.filter(CanonicalEvent.tenant_id == tenant_id)
+                anchor = anchor_q.first()
+
                 if anchor is not None:
-                    rows = (
+                    rows_q = (
                         db.query(CanonicalEvent)
                         .filter(CanonicalEvent.timestamp > anchor.timestamp)
-                        .order_by(CanonicalEvent.timestamp.asc())
-                        .limit(settings.SSE_REPLAY_MAX)
-                        .all()
                     )
+                    if tenant_id != "*":
+                        rows_q = rows_q.filter(CanonicalEvent.tenant_id == tenant_id)
+                    rows = rows_q.order_by(CanonicalEvent.timestamp.asc()).limit(settings.SSE_REPLAY_MAX).all()
+
                     for row in rows:
                         payload = _sse_payload(row)
                         if not _matches(payload):
@@ -313,6 +324,10 @@ async def stream_events(
                 # Check client disconnect between messages
                 if await request.is_disconnected():
                     break
+
+                msg_tenant = msg.get("tenant_id") or "default"
+                if tenant_id != "*" and msg_tenant != tenant_id:
+                    continue
 
                 payload = msg.get("payload") or {}
                 if not _matches(payload):
@@ -344,10 +359,11 @@ async def stream_events(
 
 
 @router.get("/{event_id}", response_model=EventDetail)
-def get_event(event_id: str, db: Session = Depends(get_db),
+def get_event(request: Request, event_id: str, db: Session = Depends(get_db),
               user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
     e = db.query(Event).filter(Event.event_id == event_id).first()
-    if not e:
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Event not found")
     c = db.query(CanonicalEvent).filter(CanonicalEvent.event_id == event_id).first()
     ev = db.query(RawEvidence).filter(RawEvidence.event_id == event_id).first()
@@ -375,10 +391,11 @@ def get_event(event_id: str, db: Session = Depends(get_db),
 
 
 @router.get("/{event_id}/raw")
-def get_raw(event_id: str, db: Session = Depends(get_db),
+def get_raw(request: Request, event_id: str, db: Session = Depends(get_db),
             user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
     e = db.query(Event).filter(Event.event_id == event_id).first()
-    if not e:
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Event not found")
     ev = db.query(RawEvidence).filter(RawEvidence.event_id == event_id).first()
     if not ev:
@@ -391,7 +408,7 @@ def get_raw(event_id: str, db: Session = Depends(get_db),
 
     ev.accessed_count += 1
     record_audit(db, actor=user.email, action="EVIDENCE_ACCESS", resource="evidence",
-                 resource_id=ev.evidence_id, new_state={"event_id": event_id})
+                 resource_id=ev.evidence_id, tenant_id=tenant_id, new_state={"event_id": event_id})
     db.commit()
     return EventRaw(
         event_id=event_id,
@@ -403,8 +420,12 @@ def get_raw(event_id: str, db: Session = Depends(get_db),
 
 
 @router.get("/{event_id}/normalized")
-def get_normalized(event_id: str, db: Session = Depends(get_db),
+def get_normalized(request: Request, event_id: str, db: Session = Depends(get_db),
                    user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
+    e = db.query(Event).filter(Event.event_id == event_id).first()
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
+        raise HTTPException(status_code=404, detail="Event not found")
     c = db.query(CanonicalEvent).filter(CanonicalEvent.event_id == event_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="No canonical event")
@@ -412,21 +433,29 @@ def get_normalized(event_id: str, db: Session = Depends(get_db),
 
 
 @router.get("/{event_id}/integrity")
-def get_integrity(event_id: str, db: Session = Depends(get_db),
+def get_integrity(request: Request, event_id: str, db: Session = Depends(get_db),
                   user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
+    e = db.query(Event).filter(Event.event_id == event_id).first()
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
+        raise HTTPException(status_code=404, detail="Event not found")
     ev = db.query(RawEvidence).filter(RawEvidence.event_id == event_id).first()
     if not ev:
         raise HTTPException(status_code=404, detail="No evidence")
     result = verify_integrity(db, ev)
     record_audit(db, actor=user.email, action="INTEGRITY_VERIFY", resource="evidence",
-                 resource_id=ev.evidence_id, new_state={"status": result["integrity_status"]})
+                 resource_id=ev.evidence_id, tenant_id=tenant_id, new_state={"status": result["integrity_status"]})
     db.commit()
     return result
 
 
 @router.get("/{event_id}/timeline")
-def get_timeline(event_id: str, db: Session = Depends(get_db),
+def get_timeline(request: Request, event_id: str, db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
+    e = db.query(Event).filter(Event.event_id == event_id).first()
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
+        raise HTTPException(status_code=404, detail="Event not found")
     runs = db.query(ProcessingRun).filter(ProcessingRun.event_id == event_id).order_by(ProcessingRun.started_at).all()
     return EventTimeline(
         event_id=event_id,
@@ -443,8 +472,12 @@ def get_timeline(event_id: str, db: Session = Depends(get_db),
 
 
 @router.get("/{event_id}/replay-history")
-def get_replay_history(event_id: str, db: Session = Depends(get_db),
+def get_replay_history(request: Request, event_id: str, db: Session = Depends(get_db),
                        user: User = Depends(get_current_user)):
+    tenant_id = get_effective_tenant_id(request, user)
+    e = db.query(Event).filter(Event.event_id == event_id).first()
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
+        raise HTTPException(status_code=404, detail="Event not found")
     runs = db.query(ReplayRun).filter(ReplayRun.event_id == event_id).order_by(desc(ReplayRun.created_at)).all()
     return {"items": [{
         "replay_id": r.replay_id,
@@ -466,15 +499,16 @@ def post_replay(
     user: User = Depends(require_analyst),
     parser_id: Optional[str] = Query(None),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     e = db.query(Event).filter(Event.event_id == event_id).first()
-    if not e:
+    if not e or (tenant_id != "*" and getattr(e, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Event not found")
     if e.processing_status not in ("QUARANTINED", "FAILED", "WARNING", "PROCESSED"):
         raise HTTPException(status_code=400, detail=f"Cannot replay from status {e.processing_status}")
 
     run = replay_event(db, event=e, operator=user.email, parser_id=parser_id)
     record_audit(db, actor=user.email, action="REPLAY", resource="event",
-                 resource_id=event_id, new_state={"result": run.result, "new_status": run.new_status})
+                 resource_id=event_id, tenant_id=tenant_id, new_state={"result": run.result, "new_status": run.new_status})
     db.commit()
     if run.result == "SUCCESS":
         dispatch_after_commit(db, [event_id])

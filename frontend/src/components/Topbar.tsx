@@ -8,7 +8,7 @@ import {
   Moon,
   Compass,
   Activity,
-  Search,
+  Building2,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/context/ThemeContext";
@@ -58,16 +58,6 @@ export function Topbar({
               </div>
             </div>
           </div>
-
-          {/* Quick Search Shortcut Bar */}
-          <div
-            onClick={() => nav("/events")}
-            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-soc-border bg-soc-panelAlt/60 text-soc-textDim hover:border-soc-accent/60 hover:text-soc-text cursor-pointer transition text-xs ml-4"
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span>Search events, rules, connectors...</span>
-            <kbd className="kbd ml-2 text-[10px]">Ctrl+K</kbd>
-          </div>
         </div>
 
         {/* Right: Telemetry Status, Tour, Theme Toggle, User Profile */}
@@ -115,6 +105,14 @@ export function Topbar({
           {/* User Profile & Logout */}
           {user ? (
             <>
+              {/* Tenant / Workspace Badge */}
+              <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-soc-accent/40 bg-soc-accent/10 px-2.5 py-1 text-soc-accent">
+                <Building2 className="h-3.5 w-3.5" />
+                <span className="max-w-[12rem] truncate text-[11px] font-semibold">
+                  {user.tenant_name || "Workspace"}
+                </span>
+              </div>
+
               <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-soc-border bg-soc-panelAlt px-2.5 py-1 text-soc-textMuted">
                 <UserIcon className="h-3.5 w-3.5 text-soc-accent" />
                 <span className="max-w-[10rem] truncate text-[11px] font-medium">

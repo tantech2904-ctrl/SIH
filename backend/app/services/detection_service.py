@@ -28,11 +28,15 @@ _SEVERITY_WEIGHT = {"INFO": 5, "LOW": 15, "MEDIUM": 35, "HIGH": 60, "CRITICAL": 
 _RULE_SEVERITY_WEIGHT = {"LOW": 10, "MEDIUM": 25, "HIGH": 45, "CRITICAL": 70}
 
 
-def _recent_events(db: Session, *, source_ip: str | None, user_name: str | None,
+def _recent_events(db: Session, *, tenant_id: str = "default", source_ip: str | None, user_name: str | None,
                    window_seconds: int, reference_time: datetime | None = None) -> list[CanonicalEvent]:
     reference = reference_time or datetime.now(timezone.utc)
     since = reference - timedelta(seconds=window_seconds)
-    q = db.query(CanonicalEvent).filter(CanonicalEvent.timestamp >= since, CanonicalEvent.timestamp <= reference)
+    q = db.query(CanonicalEvent).filter(
+        CanonicalEvent.tenant_id == tenant_id,
+        CanonicalEvent.timestamp >= since,
+        CanonicalEvent.timestamp <= reference,
+    )
     if source_ip:
         q = q.filter(CanonicalEvent.source_ip == source_ip)
     elif user_name:
@@ -115,8 +119,10 @@ def run_detection(db: Session, *, event: Event, cse: dict) -> tuple[list[dict], 
     except Exception:
         reference_time = None
 
+    tenant_id = getattr(event, "tenant_id", "default") or "default"
     recent = _recent_events(
         db,
+        tenant_id=tenant_id,
         source_ip=source_ip,
         user_name=user_name if not source_ip else None,
         window_seconds=settings.CORRELATION_WINDOW_SECONDS,
@@ -138,6 +144,7 @@ def run_detection(db: Session, *, event: Event, cse: dict) -> tuple[list[dict], 
 
         mitre = list(r.mitre or [])
         alert = Alert(
+            tenant_id=tenant_id,
             event_id=event.event_id,
             rule_id=r.rule_id,
             rule_name=r.name,

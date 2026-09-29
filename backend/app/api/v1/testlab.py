@@ -134,6 +134,7 @@ def generate(
             return {"error": f"Unknown scenario: {scenario}", "available": list(SCENARIOS.keys())}
         scenarios = [scenario]
 
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
     results = []
     for _ in range(count):
         for s in scenarios:
@@ -142,6 +143,7 @@ def generate(
                 db, raw_bytes=raw.encode("utf-8"),
                 source=f"testlab:{s}", source_type="synthetic",
                 filename=f"{s}.log", content_type="text/plain",
+                tenant_id=tenant_id,
             )
             results.append({
                 "scenario": s, "event_id": ev.event_id,
@@ -150,7 +152,7 @@ def generate(
                 "confidence": ev.detection_confidence,
             })
     record_audit(db, actor=user.email, action="TESTLAB_GENERATE", resource="testlab",
-                 new_state={"scenarios": scenarios, "count": len(results)})
+                 tenant_id=tenant_id, new_state={"scenarios": scenarios, "count": len(results)})
     db.commit()
     dispatch_after_commit(db, [r["event_id"] for r in results])
     return {"generated": len(results), "results": results}

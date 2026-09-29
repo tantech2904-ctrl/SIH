@@ -9,6 +9,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
+  register: (data: { email: string; password: string; full_name?: string; workspace_name?: string; role?: string }) => Promise<boolean>;
   logout: () => Promise<void>;
 }
 
@@ -92,6 +93,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const register = useCallback(
+    async (data: { email: string; password: string; full_name?: string; workspace_name?: string; role?: string }) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const t = await api.register(data);
+        setTokens(t.access_token, t.refresh_token);
+        const me = await api.me();
+        setUser(me);
+        setLoading(false);
+        return true;
+      } catch (e: any) {
+        clearTokens();
+        setUser(null);
+        setError(e?.message || "Registration failed");
+        setLoading(false);
+        return false;
+      }
+    },
+    [],
+  );
+
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -105,8 +128,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, error, login, logout }),
-    [user, loading, error, login, logout],
+    () => ({ user, loading, error, login, register, logout }),
+    [user, loading, error, login, register, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

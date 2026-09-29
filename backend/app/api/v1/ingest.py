@@ -58,14 +58,17 @@ def ingest_json(
     if len(raw_bytes) > settings.MAX_EVENT_BYTES:
         raise HTTPException(status_code=413, detail="Event exceeds MAX_EVENT_BYTES")
 
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
     event = ingest_event(
         db, raw_bytes=raw_bytes,
         source=body.source, source_type=body.source_type,
         filename=body.filename, content_type=body.content_type,
+        tenant_id=tenant_id,
     )
     record_audit(db, actor=user.email, action="INGEST", resource="event",
                  resource_id=event.event_id,
                  source_ip=request.client.host if request.client else None,
+                 tenant_id=tenant_id,
                  new_state={"status": event.processing_status,
                             "format": event.detected_format})
     db.commit()
@@ -102,6 +105,7 @@ async def ingest_raw(
 
     created_events = []
     ingestion_id = str(uuid.uuid4())
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
     for idx, payload in enumerate(payloads):
         event = ingest_event(
             db,
@@ -111,17 +115,19 @@ async def ingest_raw(
             filename=filename,
             content_type=content_type,
             ingestion_id=ingestion_id,
+            tenant_id=tenant_id,
         )
         created_events.append(event)
         record_audit(db, actor=user.email, action="INGEST_RAW", resource="event",
                      resource_id=event.event_id,
+                     tenant_id=tenant_id,
                      new_state={"record_index": idx, "filename": filename})
 
     db.commit()
     dispatch_after_commit(db, [e.event_id for e in created_events])
     return _response(created_events[0], db) if created_events else _response(
         ingest_event(db, raw_bytes=raw_bytes, source=source, source_type=source_type,
-                     filename=filename, content_type=content_type, ingestion_id=ingestion_id),
+                     filename=filename, content_type=content_type, ingestion_id=ingestion_id, tenant_id=tenant_id),
         db,
     )
 
@@ -162,6 +168,7 @@ async def ingest_batch(
             lines = [ln for ln in text.splitlines() if ln.strip()]
 
     ingestion_id = str(uuid.uuid4())
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
     accepted = 0
     rejected = 0
     events_out: list[IngestResponse] = []
@@ -175,6 +182,7 @@ async def ingest_batch(
                 db, raw_bytes=raw_bytes, source=source, source_type=source_type,
                 filename=filename, content_type="application/xml" if filename.lower().endswith((".evtx", ".evt")) else "text/plain",
                 ingestion_id=ingestion_id,
+                tenant_id=tenant_id,
             )
             events_out.append(_response(ev, db))
             if ev.processing_status in ("PROCESSED", "WARNING"):
@@ -185,7 +193,7 @@ async def ingest_batch(
             rejected += 1
 
     record_audit(db, actor=user.email, action="INGEST_BATCH", resource="batch",
-                 resource_id=ingestion_id, new_state={"accepted": accepted, "rejected": rejected})
+                 resource_id=ingestion_id, tenant_id=tenant_id, new_state={"accepted": accepted, "rejected": rejected})
     db.commit()
     dispatch_after_commit(db, [r.event_id for r in events_out])
     return BatchIngestResponse(

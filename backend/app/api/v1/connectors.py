@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_analyst, get_current_user
+from app.api.deps import require_analyst, get_current_user, get_effective_tenant_id
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.db.session import get_db
@@ -57,11 +57,13 @@ def heartbeat(
 ):
     cid = body.connector_id or str(uuid.uuid4())
     now = datetime.now(timezone.utc)
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
 
     row = db.query(Connector).filter(Connector.connector_id == cid).first()
     if row is None:
         row = Connector(
             connector_id=cid,
+            tenant_id=tenant_id,
             hostname=body.hostname,
             os=body.os,
             version=body.version,
@@ -74,6 +76,9 @@ def heartbeat(
         )
         db.add(row)
     else:
+        # Prevent cross-tenant connector hijacking
+        if getattr(row, "tenant_id", "default") != tenant_id and tenant_id != "default":
+            raise HTTPException(status_code=403, detail="Connector ID belongs to another tenant")
         row.hostname = body.hostname
         row.os = body.os
         row.version = body.version
@@ -90,10 +95,15 @@ def heartbeat(
 
 @router.get("", response_model=ConnectorList)
 def list_connectors(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    rows = db.query(Connector).order_by(Connector.hostname).all()
+    tenant_id = get_effective_tenant_id(request, user)
+    q = db.query(Connector)
+    if tenant_id != "*":
+        q = q.filter(Connector.tenant_id == tenant_id)
+    rows = q.order_by(Connector.hostname).all()
     items = [
         ConnectorItem(
             connector_id=r.connector_id,
@@ -117,6 +127,7 @@ def list_connectors(
 
 @router.get("/{connector_id}/config", response_model=ConnectorConfig)
 def get_connector_config(
+    request: Request,
     connector_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
@@ -125,8 +136,9 @@ def get_connector_config(
     to converge on. `desired_adapters = null` means the connector keeps
     whatever its local config chose (no opinion from the backend yet).
     """
+    tenant_id = get_effective_tenant_id(request, user)
     row = db.query(Connector).filter(Connector.connector_id == connector_id).first()
-    if row is None:
+    if row is None or (tenant_id != "*" and getattr(row, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Connector not found")
     return ConnectorConfig(
         desired_adapters=row.desired_adapters,
@@ -142,8 +154,9 @@ def set_connector_config(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     row = db.query(Connector).filter(Connector.connector_id == connector_id).first()
-    if row is None:
+    if row is None or (tenant_id != "*" and getattr(row, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Connector not found")
 
     if not row.available_adapters:
@@ -186,6 +199,7 @@ def set_connector_config(
         action="CONNECTOR_CONFIG_UPDATE",
         resource="connector",
         resource_id=connector_id,
+        tenant_id=tenant_id,
         source_ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         previous_state=previous_state,

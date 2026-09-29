@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_analyst
+from app.api.deps import get_current_user, require_analyst, get_effective_tenant_id
 from app.db.session import get_db
 from app.models.alert import Alert
 from app.models.user import User
@@ -14,6 +14,7 @@ router = APIRouter()
 
 @router.get("")
 def list_alerts(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     severity: str | None = None,
@@ -21,7 +22,10 @@ def list_alerts(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     q = db.query(Alert)
+    if tenant_id != "*":
+        q = q.filter(Alert.tenant_id == tenant_id)
     if severity:
         q = q.filter(Alert.severity == severity.upper())
     if status:
@@ -41,9 +45,15 @@ def list_alerts(
 
 
 @router.get("/{alert_id}")
-def get_alert(alert_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_alert(
+    request: Request,
+    alert_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(Alert).filter(Alert.alert_id == alert_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Alert not found")
     return {
         "alert_id": r.alert_id, "event_id": r.event_id, "rule_id": r.rule_id,
@@ -62,8 +72,9 @@ def update_status(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(Alert).filter(Alert.alert_id == alert_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Alert not found")
     new_status = (body.get("status") or "").upper()
     if new_status not in ("OPEN", "ACKNOWLEDGED", "CLOSED", "FALSE_POSITIVE"):
@@ -71,6 +82,6 @@ def update_status(
     prev = r.status
     r.status = new_status
     record_audit(db, actor=user.email, action="ALERT_STATUS", resource="alert",
-                 resource_id=alert_id, previous_state={"status": prev}, new_state={"status": new_status})
+                 resource_id=alert_id, tenant_id=tenant_id, previous_state={"status": prev}, new_state={"status": new_status})
     db.commit()
     return {"status": r.status}

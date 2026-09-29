@@ -18,6 +18,7 @@ class Event(Base):
     __tablename__ = "events"
 
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     ingestion_id: Mapped[str] = mapped_column(String(36), index=True)
     correlation_id: Mapped[str] = mapped_column(String(36), index=True)
 

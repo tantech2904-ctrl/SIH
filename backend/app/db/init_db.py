@@ -17,7 +17,7 @@ from app.db.session import SessionLocal
 from app.models.user import Role, User, user_roles  # noqa: F401 — user_roles used by relationship
 from app.models.rule import DetectionRule
 from app.models.parser import ParserRegistry
-from app.services.audit_service import ensure_genesis
+from app.services.audit_service import ensure_genesis, heal_audit_chains
 
 log = get_logger(__name__)
 
@@ -95,11 +95,25 @@ def _ensure_roles(db) -> dict[str, Role]:
     return roles
 
 
-def _ensure_user(db, email: str, password: str, roles: list[Role]) -> None:
+def _ensure_user(
+    db,
+    email: str,
+    password: str,
+    roles: list[Role],
+    tenant_id: str = "default",
+    tenant_name: str = "Default Workspace",
+) -> None:
     existing = db.scalars(select(User).where(User.email == email)).first()
     if existing:
         return
-    u = User(email=email, password_hash=hash_password(password), is_active=True, full_name=email.split("@")[0])
+    u = User(
+        email=email,
+        password_hash=hash_password(password),
+        is_active=True,
+        full_name=email.split("@")[0],
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+    )
     u.roles = roles
     db.add(u)
     db.flush()
@@ -138,9 +152,19 @@ def init_db() -> None:
         _ensure_user(db, settings.BOOTSTRAP_ADMIN_EMAIL, settings.BOOTSTRAP_ADMIN_PASSWORD, [roles["ADMIN"]])
         _ensure_user(db, settings.BOOTSTRAP_ANALYST_EMAIL, settings.BOOTSTRAP_ANALYST_PASSWORD, [roles["ANALYST"]])
         _ensure_user(db, settings.BOOTSTRAP_AUDITOR_EMAIL, settings.BOOTSTRAP_AUDITOR_PASSWORD, [roles["AUDITOR"]])
+        _ensure_user(
+            db,
+            "team@ulpf.local",
+            "ChangeMe_Team123!",
+            [roles["ADMIN"]],
+            tenant_id="tenant_beetles_demo",
+            tenant_name="Team BEETLES",
+        )
         _ensure_rules(db)
         _ensure_parser_registry(db)
-        ensure_genesis(db)
+        ensure_genesis(db, tenant_id="default")
+        ensure_genesis(db, tenant_id="tenant_beetles_demo")
+        heal_audit_chains(db)
         db.commit()
         log.info("db.init.complete")
     except Exception as e:

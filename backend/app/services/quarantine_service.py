@@ -22,6 +22,7 @@ def quarantine_event(
     event.processing_status = "QUARANTINED"
     event.error_message = detail[:2000] if detail else None
     q = QuarantineEvent(
+        tenant_id=getattr(event, "tenant_id", "default") or "default",
         event_id=event.event_id,
         reason=reason,
         detail=detail,

@@ -7,12 +7,16 @@ export interface Me {
   email: string;
   full_name: string;
   roles: string[];
+  tenant_id?: string;
+  tenant_name?: string;
 }
 
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
+  tenant_id?: string;
+  tenant_name?: string;
 }
 
 export interface EventListItem {

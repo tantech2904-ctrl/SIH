@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import require_roles, get_effective_tenant_id
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.models.user import User
@@ -14,6 +14,7 @@ router = APIRouter()
 
 @router.get("")
 def list_audit(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("ADMIN", "AUDITOR")),
     actor: str | None = None,
@@ -22,7 +23,10 @@ def list_audit(
     page: int = Query(1, ge=1),
     size: int = Query(100, ge=1, le=500),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     q = db.query(AuditLog)
+    if tenant_id != "*":
+        q = q.filter(AuditLog.tenant_id == tenant_id)
     if actor:
         q = q.filter(AuditLog.actor == actor)
     if action:
@@ -47,11 +51,13 @@ def list_audit(
 
 @router.get("/verify", response_model=AuditVerifyResponse)
 def verify_chain(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("ADMIN", "AUDITOR")),
 ):
-    """Walk the entire audit hash chain and report integrity.
+    """Walk the audit hash chain for the current tenant and report integrity.
 
     Role-gated identically to the audit list endpoint.
     """
-    return verify_audit_chain(db)
+    tenant_id = get_effective_tenant_id(request, user)
+    return verify_audit_chain(db, tenant_id=tenant_id)

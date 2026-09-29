@@ -34,7 +34,9 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     roles = user.role_names()
-    access = create_access_token(user.email, roles)
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
+    tenant_name = getattr(user, "tenant_name", "Default Workspace") or "Default Workspace"
+    access = create_access_token(user.email, roles, tenant_id=tenant_id)
     refresh, jti, expires_at = create_refresh_token(user.email)
 
     db.add(RefreshToken(
@@ -48,9 +50,16 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
     record_audit(db, actor=user.email, action="LOGIN_SUCCESS", resource="user",
                  resource_id=user.id,
                  source_ip=request.client.host if request.client else None,
-                 user_agent=request.headers.get("user-agent"))
+                 user_agent=request.headers.get("user-agent"),
+                 tenant_id=tenant_id)
     db.commit()
-    return TokenResponse(access_token=access, refresh_token=refresh, token_type="bearer")
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        token_type="bearer",
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -164,27 +173,100 @@ def logout(
 @router.get("/me", response_model=MeResponse)
 def me(user: User = Depends(get_current_user)):
     return MeResponse(
-        id=user.id, email=user.email, full_name=user.full_name, roles=user.role_names(),
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        roles=user.role_names(),
+        tenant_id=getattr(user, "tenant_id", "default") or "default",
+        tenant_name=getattr(user, "tenant_name", "Default Workspace") or "Default Workspace",
     )
 
 
-@router.post("/register", response_model=MeResponse, status_code=201)
+@router.post("/register", response_model=TokenResponse, status_code=201)
 def register(request: Request, body: RegisterRequest, db: Session = Depends(get_db)):
-    """Registration is restricted — only allowed if no users exist (bootstrap)
-    or by an ADMIN. We default to bootstrap-only to avoid open registration."""
-    count = db.query(User).count()
-    if count > 0:
-        raise HTTPException(status_code=403, detail="Registration is disabled")
-    role = db.query(Role).filter(Role.name == "ADMIN").first()
+    """Self-service workspace registration.
+    
+    Creates a new user with an isolated tenant workspace and admin privileges
+    scoped to that workspace.
+    """
+    import uuid
+    from sqlalchemy import func
+
+    existing = db.query(User).filter(User.email == body.email.lower().strip()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+
+    workspace_input = (body.workspace_name or "").strip()
+    if workspace_input:
+        # Check if an existing team workspace exists with this name or tenant_id
+        existing_team = (
+            db.query(User)
+            .filter(
+                (func.lower(User.tenant_name) == workspace_input.lower())
+                | (User.tenant_id == workspace_input)
+            )
+            .first()
+        )
+        if existing_team:
+            # Join the existing team workspace!
+            tenant_id = existing_team.tenant_id
+            workspace_title = existing_team.tenant_name
+        else:
+            # Create a brand new workspace
+            tenant_id = f"tenant_{uuid.uuid4().hex[:12]}"
+            workspace_title = workspace_input
+    else:
+        tenant_id = f"tenant_{uuid.uuid4().hex[:12]}"
+        workspace_title = f"{body.full_name or body.email.split('@')[0]}'s Workspace"
+
+    desired_role = (body.role or "ADMIN").upper().strip()
+    if desired_role not in ("ADMIN", "ANALYST", "AUDITOR"):
+        desired_role = "ADMIN"
+
+    role = db.query(Role).filter(Role.name == desired_role).first()
     if not role:
-        role = Role(name="ADMIN", description="Administrator")
+        role = Role(name=desired_role, description=f"{desired_role.title()} role")
         db.add(role)
         db.flush()
-    u = User(email=body.email, password_hash=hash_password(body.password),
-             full_name=body.full_name or body.email.split("@")[0], is_active=True)
+
+    u = User(
+        email=body.email.lower().strip(),
+        password_hash=hash_password(body.password),
+        full_name=body.full_name or body.email.split("@")[0],
+        tenant_id=tenant_id,
+        tenant_name=workspace_title,
+        is_active=True,
+    )
     u.roles = [role]
     db.add(u)
-    record_audit(db, actor=body.email, action="USER_CREATED", resource="user",
-                 resource_id=body.email, new_state={"roles": ["ADMIN"]})
+    db.flush()
+
+    roles = [role.name]
+    access = create_access_token(u.email, roles, tenant_id=tenant_id)
+    refresh, jti, expires_at = create_refresh_token(u.email)
+
+    db.add(RefreshToken(
+        jti=jti,
+        user_email=u.email,
+        expires_at=expires_at,
+        source_ip=request.client.host if request.client else None,
+        user_agent=(request.headers.get("user-agent") or "")[:512] or None,
+    ))
+    record_audit(
+        db,
+        actor=u.email,
+        action="WORKSPACE_REGISTERED",
+        resource="user",
+        resource_id=u.id,
+        tenant_id=tenant_id,
+        new_state={"roles": roles, "workspace": workspace_title, "tenant_id": tenant_id},
+    )
     db.commit()
-    return MeResponse(id=u.id, email=u.email, full_name=u.full_name, roles=[role.name])
+
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        token_type="bearer",
+        tenant_id=tenant_id,
+        tenant_name=workspace_title,
+    )

@@ -28,9 +28,9 @@ def _is_redis_available() -> bool:
     return url.startswith("redis://") or url.startswith("rediss://") or url.startswith("unix://")
 
 
-def publish_event(event_id: str, payload: dict) -> None:
+def publish_event(event_id: str, payload: dict, tenant_id: str = "default") -> None:
     """Publish one event to the bus. Best-effort — never raises."""
-    msg_data = {"event_id": event_id, "payload": payload}
+    msg_data = {"event_id": event_id, "tenant_id": tenant_id, "payload": payload}
 
     # If Redis is configured, try publishing to Redis
     if _is_redis_available():

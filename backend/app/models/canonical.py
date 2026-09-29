@@ -14,6 +14,7 @@ class CanonicalEvent(Base):
     __tablename__ = "canonical_events"
 
     cse_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     event_id: Mapped[str] = mapped_column(String(36), ForeignKey("events.event_id", ondelete="CASCADE"), unique=True, index=True)
 
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)

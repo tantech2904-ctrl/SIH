@@ -79,3 +79,23 @@ def require_admin(user: User = Depends(require_roles("ADMIN"))) -> User:
 
 def require_analyst(user: User = Depends(require_roles("ADMIN", "ANALYST"))) -> User:
     return user
+
+
+def get_effective_tenant_id(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> str:
+    """Resolve the effective tenant_id for the current request.
+    
+    If the user has role 'ADMIN' AND belongs to the 'default' super-tenant,
+    they may optionally inspect any tenant via the 'X-Tenant-ID' header
+    or '?tenant_id=' query parameter.
+    Otherwise, users are strictly sandboxed to their own user.tenant_id.
+    """
+    user_tenant = getattr(user, "tenant_id", "default") or "default"
+    user_roles = set(user.role_names()) if hasattr(user, "role_names") else set()
+    if "ADMIN" in user_roles and user_tenant == "default":
+        override = request.headers.get("X-Tenant-ID") or request.query_params.get("tenant_id")
+        if override and override.strip():
+            return override.strip()
+    return user_tenant

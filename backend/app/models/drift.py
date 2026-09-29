@@ -13,6 +13,7 @@ class SchemaDrift(Base):
     __tablename__ = "schema_drift"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: __import__("uuid").uuid4().hex)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     vendor: Mapped[str] = mapped_column(String(128), index=True)
     parser_id: Mapped[str] = mapped_column(String(64), index=True)
     parser_version: Mapped[str] = mapped_column(String(32), default="1.0.0")

@@ -13,6 +13,7 @@ class FieldMapping(Base):
     __tablename__ = "field_mappings"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     parser_id: Mapped[str] = mapped_column(String(64), index=True)
     parser_version: Mapped[str] = mapped_column(String(32), default="1.0.0")
     original_field: Mapped[str] = mapped_column(String(128))

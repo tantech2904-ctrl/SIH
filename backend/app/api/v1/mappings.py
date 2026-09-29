@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_analyst
+from app.api.deps import get_current_user, require_analyst, get_effective_tenant_id
 from app.db.session import get_db
 from app.models.mapping import FieldMapping
 from app.models.user import User
@@ -161,12 +161,16 @@ def _get_all_builtin_mappings(target_parser_id: str | None = None) -> list[dict]
 
 @router.get("")
 def list_mappings(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     parser_id: str | None = None,
 ):
-    # Query database custom mappings
+    tenant_id = get_effective_tenant_id(request, user)
+    # Query database custom mappings scoped to tenant
     q = db.query(FieldMapping)
+    if tenant_id != "*":
+        q = q.filter(FieldMapping.tenant_id == tenant_id)
     if parser_id:
         q = q.filter(FieldMapping.parser_id == parser_id)
     db_rows = q.order_by(FieldMapping.parser_id, FieldMapping.original_field).all()
@@ -206,6 +210,7 @@ def create_mapping(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     pid = body.get("parser_id")
     of = body.get("original_field")
     cf = body.get("canonical_field")
@@ -213,7 +218,9 @@ def create_mapping(
         raise HTTPException(status_code=400, detail="parser_id, original_field, canonical_field required")
 
     existing = db.query(FieldMapping).filter(
-        FieldMapping.parser_id == pid, FieldMapping.original_field == of,
+        FieldMapping.tenant_id == tenant_id,
+        FieldMapping.parser_id == pid,
+        FieldMapping.original_field == of,
     ).first()
     if existing:
         existing.canonical_field = cf
@@ -224,6 +231,7 @@ def create_mapping(
     else:
         row = FieldMapping(
             id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
             parser_id=pid,
             parser_version=body.get("parser_version", "1.0.0"),
             original_field=of,
@@ -235,7 +243,7 @@ def create_mapping(
         )
         db.add(row)
     record_audit(db, actor=user.email, action="MAPPING_UPSERT", resource="mapping",
-                 resource_id=f"{pid}:{of}", new_state={"canonical_field": cf})
+                 resource_id=f"{pid}:{of}", tenant_id=tenant_id, new_state={"canonical_field": cf})
     db.commit()
     return {"id": row.id}
 
@@ -247,8 +255,9 @@ def delete_mapping(
     db: Session = Depends(get_db),
     user: User = Depends(require_analyst),
 ):
+    tenant_id = get_effective_tenant_id(request, user)
     r = db.query(FieldMapping).filter(FieldMapping.id == mapping_id).first()
-    if not r:
+    if not r or (tenant_id != "*" and getattr(r, "tenant_id", "default") != tenant_id):
         raise HTTPException(status_code=404, detail="Mapping not found")
     prev = {
         "parser_id": r.parser_id,
@@ -257,6 +266,6 @@ def delete_mapping(
     }
     db.delete(r)
     record_audit(db, actor=user.email, action="MAPPING_DELETE", resource="mapping",
-                 resource_id=mapping_id, previous_state=prev)
+                 resource_id=mapping_id, tenant_id=tenant_id, previous_state=prev)
     db.commit()
     return {"deleted": True}

@@ -11,12 +11,15 @@ import {
   ArrowRight,
   Sun,
   Moon,
+  Building2,
+  UserPlus,
+  LogIn,
 } from "lucide-react";
 import { RestartingBox } from "@/components/RestartingBox";
 import { useTheme } from "@/context/ThemeContext";
 
 interface DemoRole {
-  id: "admin" | "analyst" | "auditor";
+  id: "admin" | "team" | "analyst" | "auditor";
   name: string;
   role: string;
   email: string;
@@ -40,6 +43,17 @@ const DEMO_ROLES: DemoRole[] = [
     description: "Complete unconstrained access: all 5 workspaces, correlation rules, attack simulation & cluster settings.",
     icon: ShieldCheck,
     recommended: true,
+  },
+  {
+    id: "team",
+    name: "Team BEETLES Workspace",
+    role: "Tenant Lead",
+    email: "team@ulpf.local",
+    pass: "ChangeMe_Team123!",
+    badge: "Isolated Team",
+    badgeColor: "bg-emerald-100 dark:bg-emerald-500/15 text-emerald-900 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30",
+    description: "Multi-tenant team workspace: private log streams, team incidents, connectors & isolated WORM evidence.",
+    icon: Building2,
   },
   {
     id: "analyst",
@@ -66,11 +80,17 @@ const DEMO_ROLES: DemoRole[] = [
 ];
 
 export default function Login() {
-  const { login, loading, user } = useAuth();
+  const { login, register, loading, user } = useAuth();
   const { effectiveTheme, toggleTheme } = useTheme();
   const nav = useNavigate();
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("admin@ulpf.local");
   const [password, setPassword] = useState("ChangeMe_Admin123!");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regFullName, setRegFullName] = useState("");
+  const [regWorkspaceName, setRegWorkspaceName] = useState("");
+  const [regRole, setRegRole] = useState<"ADMIN" | "ANALYST" | "AUDITOR">("ADMIN");
   const [err, setErr] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(
     sessionStorage.getItem("ulpf.restarting") === "true",
@@ -97,6 +117,24 @@ export default function Login() {
     const ok = await login(email, password);
     if (ok) nav("/dashboard", { replace: true });
     else setErr("Invalid email or password");
+  }
+
+  async function onRegisterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    if (!regEmail || !regPassword) {
+      setErr("Email and password are required");
+      return;
+    }
+    const ok = await register({
+      email: regEmail,
+      password: regPassword,
+      full_name: regFullName.trim() || undefined,
+      workspace_name: regWorkspaceName.trim() || undefined,
+      role: regRole,
+    });
+    if (ok) nav("/dashboard", { replace: true });
+    else setErr("Registration failed. Please verify inputs or try another email.");
   }
 
   function onRestartReady() {
@@ -160,12 +198,15 @@ export default function Login() {
                     Instant Auth
                   </span>
                 </div>
-                <p className="text-xs text-soc-textMuted mb-4 leading-relaxed">
-                  Judges and evaluators can instantly simulate different enterprise personas.{" "}
-                  <strong className="text-soc-accent font-semibold">
-                    Select Admin to test all capabilities.
-                  </strong>
+                <p className="text-xs text-soc-textMuted mb-2.5 leading-relaxed">
+                  Judges and evaluators can instantly simulate enterprise personas or isolated team sandboxes.
                 </p>
+                <div className="mb-3.5 p-2.5 rounded-xl border border-soc-accent/25 bg-soc-accent/5 text-[11px] text-soc-text leading-relaxed flex items-start gap-2">
+                  <Building2 className="h-4 w-4 text-soc-accent shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-soc-accent font-semibold">Multi-Tenancy & Teams:</strong> Select <span className="font-semibold text-emerald-500">Team BEETLES</span> below to explore an isolated team sandbox, or create/join any team workspace using the tab on the right.
+                  </div>
+                </div>
 
                 {/* Role Cards List */}
                 <div className="space-y-3">
@@ -232,74 +273,239 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Right 5 Cols: Standard Credentials Form */}
+            {/* Right 5 Cols: Standard Credentials Form or Isolated Workspace Registration */}
             <div className="lg:col-span-5 rounded-2xl border border-soc-border bg-soc-panel/95 backdrop-blur-md p-5 sm:p-6 shadow-md flex flex-col justify-between">
-              <form onSubmit={onSubmit} className="space-y-4">
-                <div>
-                  <h3 className="text-sm font-bold text-soc-text">
-                    Manual Sign In
-                  </h3>
-                  <p className="text-xs text-soc-textMuted mt-0.5">
-                    Or sign in with custom security credentials
-                  </p>
+              <div>
+                {/* Tab Switcher */}
+                <div className="flex rounded-xl bg-soc-panelAlt p-1 border border-soc-border mb-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("login");
+                      setErr(null);
+                    }}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+                      authMode === "login"
+                        ? "bg-soc-panel text-soc-text shadow-sm border border-soc-border"
+                        : "text-soc-textDim hover:text-soc-text"
+                    }`}
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span>Log In</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("register");
+                      setErr(null);
+                    }}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+                      authMode === "register"
+                        ? "bg-soc-panel text-soc-accent shadow-sm border border-soc-border"
+                        : "text-soc-textDim hover:text-soc-text"
+                    }`}
+                  >
+                    <Building2 className="h-3.5 w-3.5" />
+                    <span>New Workspace</span>
+                  </button>
                 </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <label className="label">Account Email</label>
-                    <input
-                      className="input rounded-xl"
-                      type="email"
-                      value={email}
-                      onChange={(e) => {
-                        setEmail(e.target.value);
-                        setActiveQuickRole(null);
-                      }}
-                      autoComplete="username"
-                      required
-                    />
-                  </div>
+                {authMode === "login" ? (
+                  <form onSubmit={onSubmit} className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-soc-text">
+                        Manual Log In
+                      </h3>
+                      <p className="text-xs text-soc-textMuted mt-0.5">
+                        Log in with custom security credentials
+                      </p>
+                    </div>
 
-                  <div>
-                    <label className="label">Password</label>
-                    <input
-                      className="input rounded-xl"
-                      type="password"
-                      value={password}
-                      onChange={(e) => {
-                        setPassword(e.target.value);
-                        setActiveQuickRole(null);
-                      }}
-                      autoComplete="current-password"
-                      required
-                    />
-                  </div>
-                </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="label">Account Email</label>
+                        <input
+                          className="input rounded-xl"
+                          type="email"
+                          value={email}
+                          onChange={(e) => {
+                            setEmail(e.target.value);
+                            setActiveQuickRole(null);
+                          }}
+                          autoComplete="username"
+                          required
+                        />
+                      </div>
 
-                {err && (
-                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-500 font-medium leading-relaxed">
-                    {err}
-                  </div>
+                      <div>
+                        <label className="label">Password</label>
+                        <input
+                          className="input rounded-xl"
+                          type="password"
+                          value={password}
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            setActiveQuickRole(null);
+                          }}
+                          autoComplete="current-password"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {err && (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-500 font-medium leading-relaxed">
+                        {err}
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      className="btn btn-primary w-full justify-center rounded-xl py-2.5 font-semibold text-sm shadow-md"
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Authenticating...</span>
+                        </span>
+                      ) : (
+                        <span>Log In to Platform</span>
+                      )}
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={onRegisterSubmit} className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-soc-text">
+                        Create or Join Workspace
+                      </h3>
+                      <p className="text-[11px] text-soc-textMuted mt-0.5">
+                        Spin up a new private sandbox or enter an existing team name to collaborate
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="label text-[11px]">Workspace / Team Name</label>
+                      <input
+                        className="input rounded-xl text-xs py-1.5"
+                        type="text"
+                        placeholder="e.g. Team BEETLES or RedTeam Alpha"
+                        value={regWorkspaceName}
+                        onChange={(e) => setRegWorkspaceName(e.target.value)}
+                      />
+                      <p className="text-[10px] text-soc-textDim mt-1">
+                        💡 If the team name already exists, you will automatically join that team!
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="label text-[11px]">Workspace Role</label>
+                      <div className="grid grid-cols-3 gap-1.5 mt-1">
+                        <button
+                          type="button"
+                          onClick={() => setRegRole("ADMIN")}
+                          className={`py-1.5 px-2 rounded-xl text-xs font-semibold border text-center transition ${
+                            regRole === "ADMIN"
+                              ? "bg-soc-accent/15 border-soc-accent text-soc-accent shadow-sm"
+                              : "bg-soc-panelAlt border-soc-border text-soc-textMuted hover:border-soc-accent/40"
+                          }`}
+                        >
+                          Admin
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRegRole("ANALYST")}
+                          className={`py-1.5 px-2 rounded-xl text-xs font-semibold border text-center transition ${
+                            regRole === "ANALYST"
+                              ? "bg-sky-500/15 border-sky-500 text-sky-400 shadow-sm"
+                              : "bg-soc-panelAlt border-soc-border text-soc-textMuted hover:border-sky-500/40"
+                          }`}
+                        >
+                          Analyst
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRegRole("AUDITOR")}
+                          className={`py-1.5 px-2 rounded-xl text-xs font-semibold border text-center transition ${
+                            regRole === "AUDITOR"
+                              ? "bg-purple-500/15 border-purple-500 text-purple-400 shadow-sm"
+                              : "bg-soc-panelAlt border-soc-border text-soc-textMuted hover:border-purple-500/40"
+                          }`}
+                        >
+                          Auditor
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="label text-[11px]">Full Name</label>
+                      <input
+                        className="input rounded-xl text-xs py-1.5"
+                        type="text"
+                        placeholder="e.g. Lead Analyst"
+                        value={regFullName}
+                        onChange={(e) => setRegFullName(e.target.value)}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="label text-[11px]">Work Email</label>
+                      <input
+                        className="input rounded-xl text-xs py-1.5"
+                        type="email"
+                        placeholder="analyst@domain.com"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        autoComplete="username"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="label text-[11px]">Password</label>
+                      <input
+                        className="input rounded-xl text-xs py-1.5"
+                        type="password"
+                        placeholder="Min 8 characters"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        autoComplete="new-password"
+                        required
+                      />
+                    </div>
+
+                    {err && (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-500 font-medium leading-relaxed">
+                        {err}
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      className="btn btn-primary w-full justify-center rounded-xl py-2.5 font-semibold text-xs shadow-md mt-1"
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Setting Up Workspace...</span>
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <UserPlus className="h-3.5 w-3.5" />
+                          <span>Create or Join Team Workspace</span>
+                        </span>
+                      )}
+                    </button>
+                  </form>
                 )}
-
-                <button
-                  type="submit"
-                  className="btn btn-primary w-full justify-center rounded-xl py-2.5 font-semibold text-sm shadow-md"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <span className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Authenticating...</span>
-                    </span>
-                  ) : (
-                    <span>Sign In to Platform</span>
-                  )}
-                </button>
-              </form>
+              </div>
 
               <div className="mt-4 pt-3 border-t border-soc-border text-center text-[10px] text-soc-textDim">
-                Role-Based Access Control (RBAC) enforced across all endpoints.
+                {authMode === "register"
+                  ? "Teams with matching names share private telemetry, alerts, and incidents."
+                  : "Role-Based Access Control (RBAC) enforced across all endpoints."}
               </div>
             </div>
           </div>

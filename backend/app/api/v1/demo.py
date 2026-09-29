@@ -37,6 +37,7 @@ def run_demo(
     event_ids: list[str] = []
     results: list[dict] = []
 
+    tenant_id = getattr(user, "tenant_id", "default") or "default"
     for name, gen_fn in SCENARIOS.items():
         try:
             raw = gen_fn()
@@ -47,6 +48,7 @@ def run_demo(
                 source_type="demo",
                 filename=f"{name}.log",
                 content_type="text/plain",
+                tenant_id=tenant_id,
             )
             event_ids.append(ev.event_id)
             results.append({

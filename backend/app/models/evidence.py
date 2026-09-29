@@ -18,6 +18,7 @@ class RawEvidence(Base):
     __tablename__ = "raw_evidence"
 
     evidence_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default", server_default="default")
     event_id: Mapped[str] = mapped_column(String(36), ForeignKey("events.event_id", ondelete="CASCADE"), index=True)
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     raw_size: Mapped[int] = mapped_column(Integer)

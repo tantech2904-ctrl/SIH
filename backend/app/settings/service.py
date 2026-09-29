@@ -23,14 +23,20 @@ ENV_FALLBACK_PATH = Path(os.environ.get("ULPF_ENV_FILE", ".env"))
 
 def _active_env_path() -> Path:
     if ENV_LIVE_PATH.exists():
-        return ENV_LIVE_PATH
-    return ENV_FALLBACK_PATH
+        if ENV_LIVE_PATH.is_file():
+            return ENV_LIVE_PATH
+        if ENV_LIVE_PATH.is_dir():
+            inner = ENV_LIVE_PATH / ".env"
+            return inner
+    if ENV_FALLBACK_PATH.exists() and ENV_FALLBACK_PATH.is_file():
+        return ENV_FALLBACK_PATH
+    return ENV_LIVE_PATH
 
 
 def _read_current_values() -> dict[str, str]:
     from app.settings.env_file import read_env_file
     path = _active_env_path()
-    values = read_env_file(path) if path.exists() else {}
+    values = read_env_file(path) if (path.exists() and path.is_file()) else {}
     # Fill in values from the running Settings object for anything missing
     for k in EDITABLE_KEY_MAP:
         if k not in values:

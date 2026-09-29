@@ -63,6 +63,7 @@ def ingest_event(
     content_type: str,
     correlation_id: str | None = None,
     ingestion_id: str | None = None,
+    tenant_id: str = "default",
 ) -> Event:
     """Synchronous ingestion of one event (raw bytes)."""
     correlation_id = correlation_id or str(uuid.uuid4())
@@ -70,6 +71,7 @@ def ingest_event(
 
     event = Event(
         event_id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
         ingestion_id=ingestion_id,
         correlation_id=correlation_id,
         source=source,
@@ -88,7 +90,7 @@ def ingest_event(
     try:
         evidence = preserve_evidence(
             db=db, event_id=event.event_id, raw_bytes=raw_bytes,
-            source=source, content_type=content_type,
+            source=source, content_type=content_type, tenant_id=tenant_id,
         )
         run = _stage_start(db, event.event_id, "PRESERVED", component="evidence")
         _stage_end(run)
@@ -200,7 +202,7 @@ def _run_full_pipeline(db: Session, *, event: Event, raw_text: str, detection) -
         return event
 
     # 4) Custom mappings from DB (analyst-approved overrides)
-    custom = _load_custom_mappings(db, parser.parser_id)
+    custom = _load_custom_mappings(db, parser.parser_id, tenant_id=getattr(event, "tenant_id", "default") or "default")
 
     # 5) Map / Normalize
     run = _stage_start(db, event.event_id, "NORMALIZED", component="cse_mapper")
@@ -257,9 +259,10 @@ def _run_full_pipeline(db: Session, *, event: Event, raw_text: str, detection) -
     return event
 
 
-def _load_custom_mappings(db: Session, parser_id: str) -> dict[str, dict]:
+def _load_custom_mappings(db: Session, parser_id: str, tenant_id: str = "default") -> dict[str, dict]:
     from app.models.mapping import FieldMapping
     rows = db.query(FieldMapping).filter(
+        FieldMapping.tenant_id == tenant_id,
         FieldMapping.parser_id == parser_id,
         FieldMapping.approved.is_(True),
         FieldMapping.mapping_source.in_(["analyst", "analyzer"]),
@@ -289,7 +292,9 @@ def _persist_cse(db: Session, *, event: Event, cse: dict, provenance: list,
     if "user.email" in cse:
         extensions["user_email"] = cse["user.email"]
 
+    tenant_id = getattr(event, "tenant_id", "default") or "default"
     row = CanonicalEvent(
+        tenant_id=tenant_id,
         event_id=event.event_id,
         timestamp=ts or datetime.now(timezone.utc),
         event_type=str(cse.get("event_type") or "unknown")[:64],
@@ -335,7 +340,11 @@ def _maybe_record_drift(db: Session, *, event: Event, parser_id: str, parser_ver
     from app.normalization.vocabulary import lookup_alias
     from app.models.mapping import FieldMapping
 
-    known_rows = db.query(FieldMapping).filter(FieldMapping.parser_id == parser_id).all()
+    tenant_id = getattr(event, "tenant_id", "default") or "default"
+    known_rows = db.query(FieldMapping).filter(
+        FieldMapping.tenant_id == tenant_id,
+        FieldMapping.parser_id == parser_id,
+    ).all()
     known_fields = [r.original_field for r in known_rows]
 
     observed_canonical_map = {f: lookup_alias(f) for f in observed_fields}
@@ -359,6 +368,7 @@ def _maybe_record_drift(db: Session, *, event: Event, parser_id: str, parser_ver
             for f in fields:
                 if f not in known_fields:
                     existing = db.query(SchemaDrift).filter(
+                        SchemaDrift.tenant_id == tenant_id,
                         SchemaDrift.parser_id == parser_id,
                         SchemaDrift.observed_field == f,
                     ).first()
@@ -367,6 +377,7 @@ def _maybe_record_drift(db: Session, *, event: Event, parser_id: str, parser_ver
                         db.flush()
                         continue
                     d = SchemaDrift(
+                        tenant_id=tenant_id,
                         vendor=drift_vendor or "unknown",
                         parser_id=parser_id,
                         parser_version=parser_version,
@@ -439,7 +450,8 @@ def dispatch_after_commit(db: Session, event_ids: list[str]) -> None:
                 )
                 if row is None:
                     continue
-                publish_event(eid, _sse_payload(row))
+                row_tenant = getattr(row, "tenant_id", "default") or "default"
+                publish_event(eid, _sse_payload(row), tenant_id=row_tenant)
             except Exception as e:
                 log.warning("sse.publish_failed event_id=%s error=%s", eid, e)
     except Exception as e:
@@ -455,6 +467,7 @@ def _sse_payload(c: CanonicalEvent) -> dict:
     threat_context = c.threat_context if isinstance(c.threat_context, dict) else None
     return {
         "event_id": c.event_id,
+        "tenant_id": getattr(c, "tenant_id", "default") or "default",
         "timestamp": c.timestamp.isoformat() if c.timestamp else None,
         "event_type": c.event_type or "unknown",
         "category": c.category or "unknown",
