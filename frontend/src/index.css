@@ -1,0 +1,202 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* Modern Enterprise SIEM - High-Contrast Precision Light Mode (WCAG AAA) */
+    --soc-bg: 241 245 249;          /* #f1f5f9 (slate-100) - clear background canvas */
+    --soc-panel: 255 255 255;       /* #ffffff (pure white) - pop against canvas */
+    --soc-panel-alt: 232 239 246;   /* #e8eff6 (cool slate) - distinct header and row contrast */
+    --soc-border: 203 213 225;      /* #cbd5e1 (slate-300) - clean defined card/row borders */
+    --soc-border-strong: 148 163 184; /* #94a3b8 (slate-400) - bold interactive outlines */
+    --soc-text: 15 23 42;           /* #0f172a (slate-900) - deep ink black, maximum readability */
+    --soc-text-muted: 51 65 85;     /* #334155 (slate-700) - readable secondary text (9.5:1 contrast) */
+    --soc-text-dim: 71 85 105;      /* #475569 (slate-600) - sharp labels, no eye strain (7.1:1 contrast) */
+    --soc-accent: 2 132 199;        /* #0284c7 (sky-600) */
+    --soc-accent-dim: 3 105 161;    /* #0369a1 (sky-700) */
+    --soc-accent-soft: 14 165 233;  /* #0ea5e9 (sky-500) */
+    --soc-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 4px 14px -2px rgba(15, 23, 42, 0.05);
+  }
+
+  .dark {
+    color-scheme: dark;
+    /* Modern Cyber SOC SIEM - Deep Obsidian Cyber Dark Mode (R G B channels) */
+    --soc-bg: 7 11 18;
+    --soc-panel: 13 21 34;
+    --soc-panel-alt: 19 29 47;
+    --soc-border: 30 41 59;
+    --soc-border-strong: 51 65 85;
+    --soc-text: 248 250 252;
+    --soc-text-muted: 148 163 184;
+    --soc-text-dim: 100 116 139;
+    --soc-accent: 6 182 212;
+    --soc-accent-dim: 8 145 178;
+    --soc-accent-soft: 103 232 249;
+    --soc-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  }
+
+  html, body, #root {
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: rgb(var(--soc-bg));
+    color: rgb(var(--soc-text));
+    font-feature-settings: "cv11", "ss01";
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(circle at top, rgba(6, 182, 212, 0.08), transparent 30%),
+      radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.06), transparent 35%);
+  }
+
+  body:not(.dark body) {
+    background-image:
+      radial-gradient(circle at top, rgba(2, 132, 199, 0.05), transparent 30%),
+      radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.04), transparent 35%);
+  }
+
+  * {
+    border-color: rgb(var(--soc-border));
+  }
+
+  ::selection {
+    background-color: rgb(var(--soc-accent) / 0.25);
+    color: rgb(var(--soc-text));
+  }
+
+  pre {
+    border-color: rgb(var(--soc-border));
+    color: rgb(var(--soc-text));
+  }
+
+  /* Custom Sleek Scrollbars */
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background-color: rgb(var(--soc-bg)); }
+  ::-webkit-scrollbar-thumb { background-color: rgb(var(--soc-border-strong) / 0.8); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--soc-accent-dim)); }
+}
+
+@layer components {
+  .panel {
+    background-color: rgb(var(--soc-panel));
+    border-color: rgb(var(--soc-border));
+    @apply border rounded-xl text-soc-text transition-all duration-200;
+    box-shadow: var(--soc-shadow);
+  }
+
+  .panel-header {
+    background-color: rgb(var(--soc-panel-alt) / 0.6);
+    border-color: rgb(var(--soc-border));
+    @apply px-4 py-3 border-b flex items-center justify-between rounded-t-xl;
+  }
+
+  .panel-title {
+    @apply text-xs font-bold text-soc-text tracking-[0.16em] uppercase flex items-center gap-2;
+  }
+
+  .btn {
+    background-color: rgb(var(--soc-panel-alt));
+    border-color: rgb(var(--soc-border));
+    color: rgb(var(--soc-text));
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold transition-all duration-200 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn:hover:not(:disabled) {
+    border-color: rgb(var(--soc-accent));
+    background-color: rgb(var(--soc-panel));
+    color: rgb(var(--soc-accent));
+  }
+
+  .btn-primary {
+    border-color: transparent;
+    background-image: linear-gradient(to right, rgb(var(--soc-accent)), rgb(var(--soc-accent-dim)));
+    color: #ffffff;
+    @apply shadow-md hover:brightness-110 font-bold;
+  }
+
+  .btn-danger {
+    border-color: rgba(239, 68, 68, 0.4);
+    background-color: rgba(239, 68, 68, 0.1);
+    color: rgb(220, 38, 38);
+    @apply font-bold;
+  }
+
+  .dark .btn-danger {
+    color: rgb(248, 113, 113);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: rgba(239, 68, 68, 0.2);
+  }
+
+  .input {
+    background-color: rgb(var(--soc-panel));
+    border-color: rgb(var(--soc-border));
+    color: rgb(var(--soc-text));
+    @apply w-full rounded-lg border px-3 py-2 text-sm font-medium transition-colors duration-200 placeholder:text-soc-textDim/80 focus:outline-none focus:ring-2 focus:ring-soc-accent/25 focus:border-soc-accent;
+  }
+
+  .label {
+    color: rgb(var(--soc-text));
+    @apply mb-1.5 block text-[0.7rem] font-bold uppercase tracking-[0.16em];
+  }
+
+  .table {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .table thead th {
+    background-color: rgb(var(--soc-panel-alt));
+    border-color: rgb(var(--soc-border));
+    color: rgb(var(--soc-text));
+    @apply sticky top-0 z-10 border-b px-3.5 py-2.5 text-left text-[0.7rem] font-bold uppercase tracking-[0.16em] backdrop-blur-sm;
+  }
+
+  .table tbody td {
+    border-color: rgb(var(--soc-border));
+    @apply border-b px-3.5 py-2.5 align-middle text-soc-text font-normal;
+  }
+
+  .table tbody tr:hover {
+    background-color: rgb(var(--soc-panel-alt) / 0.7);
+  }
+
+  .badge {
+    background-color: rgb(var(--soc-panel-alt));
+    border-color: rgb(var(--soc-border-strong));
+    color: rgb(var(--soc-text));
+    @apply inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[0.68rem] font-bold uppercase tracking-[0.1em];
+  }
+
+  .kbd {
+    background-color: rgb(var(--soc-panel-alt));
+    border-color: rgb(var(--soc-border-strong));
+    color: rgb(var(--soc-text));
+    @apply inline-flex items-center rounded border px-1.5 py-0.5 text-[0.65rem] font-mono font-bold shadow-sm;
+  }
+
+  .stat-value {
+    color: rgb(var(--soc-text));
+    @apply text-2xl font-black tracking-tight tabular-nums;
+  }
+
+  .stat-label {
+    color: rgb(var(--soc-text-dim));
+    @apply text-[0.68rem] uppercase tracking-[0.18em] font-bold;
+  }
+
+  .page-shell {
+    @apply p-4 sm:p-6 lg:p-7 max-w-[1700px] mx-auto;
+  }
+
+  .page-header {
+    @apply flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4;
+  }
+}

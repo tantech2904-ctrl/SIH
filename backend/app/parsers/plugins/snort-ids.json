@@ -1,0 +1,21 @@
+{
+  "name": "snort-ids",
+  "vendor": "Cisco",
+  "product": "Snort",
+  "format": "Snort",
+  "version": "1.0.0",
+  "description": "Snort fast alert format.",
+  "match_criteria": {
+    "contains": ["[**]", "[Priority:"],
+    "regex": "\\[\\*\\*\\]\\s*\\[\\d+:\\d+:\\d+\\]"
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": "\\[\\*\\*\\]\\s*\\[(?P<sig_id>\\d+):(?P<sig_rev>\\d+):(?P<sig_sub>\\d+)\\]\\s*(?P<msg>[^\\[]+?)\\s*\\[\\*\\*\\]\\s*\\[Priority:\\s*(?P<priority>\\d+)\\]\\s*\\{(?P<proto>\\w+)\\}\\s*(?P<src>[\\d.]+)(?::(?P<sport>\\d+))?\\s*->\\s*(?P<dst>[\\d.]+)(?::(?P<dport>\\d+))?"
+  },
+  "field_mappings": {
+    "src": "source.ip", "dst": "destination.ip",
+    "sport": "source.port", "dport": "destination.port",
+    "proto": "protocol", "msg": "message", "priority": "severity"
+  }
+}

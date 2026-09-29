@@ -1,0 +1,4 @@
+timestamp,src_ip,dst_ip,src_port,dst_port,protocol,action,severity,message
+2026-01-15T11:00:00Z,203.0.113.88,10.0.0.5,51000,22,tcp,allow,INFO,SSH session from external host
+2026-01-15T11:00:05Z,203.0.113.88,10.0.0.5,51001,23,tcp,block,MEDIUM,Telnet attempt blocked
+2026-01-15T11:00:10Z,203.0.113.88,10.0.0.5,51002,445,tcp,block,MEDIUM,SMB probe blocked

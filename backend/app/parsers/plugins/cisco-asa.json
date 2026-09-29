@@ -1,0 +1,20 @@
+{
+  "name": "cisco-asa",
+  "vendor": "Cisco",
+  "product": "ASA",
+  "format": "CiscoASA",
+  "version": "1.0.0",
+  "description": "Cisco ASA syslog %ASA-N-… message.",
+  "match_criteria": {
+    "contains": ["%ASA-"],
+    "regex": "%ASA-\\d-\\d{6}:"
+  },
+  "extraction": {
+    "type": "regex",
+    "pattern": "%ASA-\\d-\\d{6}:.*?(?:inside:|outside:)(?P<src>[\\d.]+)/(?P<sport>\\d+).*?to\\s+(?:inside:|outside:)(?P<dst>[\\d.]+)/(?P<dport>\\d+)"
+  },
+  "field_mappings": {
+    "src": "source.ip", "dst": "destination.ip",
+    "sport": "source.port", "dport": "destination.port"
+  }
+}

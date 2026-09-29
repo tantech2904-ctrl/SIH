@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Event>
+  <timestamp>2026-01-15T10:50:00Z</timestamp>
+  <event_type>network</event_type>
+  <src_ip>203.0.113.77</src_ip>
+  <dst_ip>10.0.0.20</dst_ip>
+  <dst_port>22</dst_port>
+  <protocol>tcp</protocol>
+  <action>block</action>
+  <severity>MEDIUM</severity>
+  <message>Firewall blocked inbound SSH from suspicious source</message>
+  <vendor>ExampleFirewall</vendor>
+</Event>
