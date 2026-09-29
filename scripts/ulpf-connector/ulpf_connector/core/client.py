@@ -34,29 +34,42 @@ class UlpfClient:
     # ------------------------------------------------------------------ auth
 
     def _login(self) -> bool:
-        url = f"{self.config.ulpf_base}/api/v1/auth/login"
-        try:
-            r = self._client.post(
-                url,
-                json={
-                    "email": self.config.auth.email,
-                    "password": self.config.resolve_password(),
-                },
-            )
-            if r.status_code != 200:
-                log.error("login.failed status=%s body=%s", r.status_code, r.text[:200])
-                return False
-            token = r.json().get("access_token")
-            if not token:
-                log.error("login.no_token body=%s", r.text[:200])
-                return False
-            with self._lock:
-                self._token = token
-            log.info("login.ok email=%s", self.config.auth.email)
-            return True
-        except Exception as exc:
-            log.error("login.exception err=%s", exc)
-            return False
+        candidate_bases = [self.config.ulpf_base]
+        if "localhost" in self.config.ulpf_base:
+            candidate_bases.append(self.config.ulpf_base.replace("localhost", "127.0.0.1"))
+        elif "127.0.0.1" in self.config.ulpf_base:
+            candidate_bases.append(self.config.ulpf_base.replace("127.0.0.1", "localhost"))
+
+        last_exc = None
+        for base in candidate_bases:
+            url = f"{base}/api/v1/auth/login"
+            try:
+                r = self._client.post(
+                    url,
+                    json={
+                        "email": self.config.auth.email,
+                        "password": self.config.resolve_password(),
+                    },
+                )
+                if r.status_code != 200:
+                    log.error("login.failed status=%s body=%s", r.status_code, r.text[:200])
+                    return False
+                token = r.json().get("access_token")
+                if not token:
+                    log.error("login.no_token body=%s", r.text[:200])
+                    return False
+                with self._lock:
+                    self._token = token
+                    if base != self.config.ulpf_base:
+                        self.config.ulpf_base = base
+                log.info("login.ok email=%s url=%s", self.config.auth.email, url)
+                return True
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        log.error("login.exception err=%s", last_exc)
+        return False
 
     def _auth_header(self) -> dict[str, str] | None:
         with self._lock:

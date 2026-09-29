@@ -399,14 +399,14 @@ echo     Login:     admin@ulpf.local / ChangeMe_Admin123!
 echo.
 echo   ------------------------------------------------------------
 echo     Workspaces:
-echo       1. SOC Command Center       4. Pipeline & Schema Normalization
-echo       2. Live Telemetry & Streams 5. Threat Detection & MITRE ATT&CK
-echo       3. Discovery & ML Export    6. Forensic Evidence & Audit
+echo       1. SOC Command Center       4. Pipeline ^& Schema Normalization
+echo       2. Live Telemetry ^& Streams 5. Threat Detection ^& MITRE ATT^&CK
+echo       3. Discovery ^& ML Export    6. Forensic Evidence ^& Audit
 echo   ------------------------------------------------------------
 echo     Commands:
 echo       s   status       l   logs  ^(check ULPF Backend window^)
 echo       h   help         r   restart windows
 echo       b   reinstall    c   clear
-echo       o   open browser q   quit & stop
+echo       o   open browser q   quit ^& stop
 echo.
 exit /b 0

@@ -76,7 +76,7 @@ def _wait_for_backend(client: UlpfClient, timeout_s: float) -> bool:
 
     log.info("connector.waiting_for_backend timeout_s=%d", int(timeout_s))
     deadline = time.time() + timeout_s
-    delays = [1, 2, 4, 8, 15, 30, 60, 120, 300]
+    delays = [1, 2, 3, 5]
     attempt = 0
 
     while time.time() < deadline and not _shutdown.is_set():
