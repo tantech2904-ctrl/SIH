@@ -15,14 +15,15 @@
 ## ⚡ Quick Links & Navigation
 
 1. [Quick Start (One-Click Automated)](#1-quick-start-one-click-automated)
-2. [Default Credentials & Demo Personas](#2-default-credentials--demo-personas)
-3. [Multi-Tenant Isolated Workspaces](#3-multi-tenant-isolated-workspaces)
-4. [Manual Setup Fallback: Docker Compose](#4-manual-setup-fallback-docker-compose)
-5. [Manual Setup Fallback: 100% Local Run (No Docker)](#5-manual-setup-fallback-100-local-run-no-docker)
-6. [Cloud Hosting (Oracle Cloud / Ubuntu / Debian VPS)](#6-cloud-hosting-oracle-cloud--vps-deployment)
-7. [Host Log Connectors (Windows, Linux, macOS)](#7-host-log-connectors-windows-linux-macos)
-8. [Platform Architecture & Workspaces](#8-platform-architecture--workspaces)
-9. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
+2. [Reset & Full Cleanup (cleanup_ulpf.bat / .sh)](#2-reset--full-cleanup-cleanup_ulpfbat--cleanup_ulpfsh)
+3. [Default Credentials & Demo Personas](#3-default-credentials--demo-personas)
+4. [Multi-Tenant Isolated Workspaces](#4-multi-tenant-isolated-workspaces)
+5. [Manual Setup Fallback: Docker Compose](#5-manual-setup-fallback-docker-compose)
+6. [Manual Setup Fallback: 100% Local Run (No Docker)](#6-manual-setup-fallback-100-local-run-no-docker)
+7. [Cloud Hosting (Oracle Cloud / Ubuntu / Debian VPS)](#7-cloud-hosting-oracle-cloud--vps-deployment)
+8. [Host Log Connectors (Windows, Linux, macOS)](#8-host-log-connectors-windows-linux-macos)
+9. [Platform Architecture & Workspaces](#9-platform-architecture--workspaces)
+10. [Troubleshooting & FAQs](#10-troubleshooting--faqs)
 
 ---
 
@@ -59,7 +60,39 @@ Once started, the platform will be available at:
 
 ---
 
-## 2. Default Credentials & Demo Personas
+## 2. Reset & Full Cleanup (`cleanup_ulpf.bat` / `cleanup_ulpf.sh`)
+
+When preparing for a fresh demo run, resetting after test scenarios, or troubleshooting environment state, ULPF provides an all-in-one cleanup script:
+
+### 🪟 Windows
+Right-click and select **Run as Administrator**, or run from an elevated Command Prompt / PowerShell:
+```cmd
+cleanup_ulpf.bat
+```
+*(Or run `scripts\cleanup.bat`)*
+
+### 🐧 Linux & 🍎 macOS
+Run in your terminal:
+```bash
+chmod +x cleanup_ulpf.sh
+./cleanup_ulpf.sh
+```
+
+### What the Cleanup Script Does:
+- **Docker Containers & Networks**: Stops the ULPF stack and removes project containers, networks, and builder caches.
+- **Docker Volumes**: Removes database volumes (`ulpf_pg`) and evidence storage (`ulpf_minio`) for a 100% clean database slate.
+- **Background Connectors**: Terminates running Windows Event Log / Syslog / Journald tailing processes and unregisters scheduled tasks (`\ULPF\Connector`).
+- **Connector State & Spool**: Clears `C:\ProgramData\ULPF`, `%USERPROFILE%\.ulpf`, `%USERPROFILE%\.ulpf-connector`, bookmarks, and spool queues.
+- **Environment Secrets**: Removes `.env`, `.env.live`, and timestamped `.env.bak.*` backups.
+- **Local Runtime Artifacts**: Cleans `backend\venv`, SQLite databases (`backend\*.db`), `frontend\node_modules`, `frontend\dist`, and Python caches (`__pycache__`, `.pytest_cache`).
+
+> [!NOTE]
+> **Safety Guarantee**: The cleanup script **never touches** your source code, git history, documentation, or template configuration files (`.env.example`).
+> Before proceeding, the script requires typing `YES` in the terminal to avoid accidental resets.
+
+---
+
+## 3. Default Credentials & Demo Personas
 
 The login screen provides **1-Click Quick Demo Login** buttons. You can also sign in manually:
 
