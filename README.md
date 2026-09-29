@@ -20,7 +20,7 @@
 4. [Multi-Tenant Isolated Workspaces](#4-multi-tenant-isolated-workspaces)
 5. [Manual Setup Fallback: Docker Compose](#5-manual-setup-fallback-docker-compose)
 6. [Manual Setup Fallback: 100% Local Run (No Docker)](#6-manual-setup-fallback-100-local-run-no-docker)
-7. [Cloud Hosting (Oracle Cloud / Ubuntu / Debian VPS)](#7-cloud-hosting-oracle-cloud--vps-deployment)
+7. [Cloud Hosting & Strategic Rationale (Oracle Cloud / VPS)](#7-cloud-hosting--strategic-rationale-oracle-cloud--vps)
 8. [Host Log Connectors (Windows, Linux, macOS)](#8-host-log-connectors-windows-linux-macos)
 9. [Platform Architecture & Workspaces](#9-platform-architecture--workspaces)
 10. [Troubleshooting & FAQs](#10-troubleshooting--faqs)
@@ -105,7 +105,7 @@ The login screen provides **1-Click Quick Demo Login** buttons. You can also sig
 
 ---
 
-## 3. Multi-Tenant Isolated Workspaces
+## 4. Multi-Tenant Isolated Workspaces
 
 ULPF SecOps features **complete data isolation** for teams, judges, and evaluators:
 
@@ -119,7 +119,7 @@ ULPF SecOps features **complete data isolation** for teams, judges, and evaluato
 
 ---
 
-## 4. Manual Setup Fallback: Docker Compose
+## 5. Manual Setup Fallback: Docker Compose
 
 If the automated `.bat` or `.sh` script encounters an issue on your machine, you can run the entire containerized stack manually using standard Docker Compose:
 
@@ -170,7 +170,7 @@ docker compose down
 
 ---
 
-## 5. Manual Setup Fallback: 100% Local Run (No Docker)
+## 6. Manual Setup Fallback: 100% Local Run (No Docker)
 
 If Docker is unavailable, you can run both backend and frontend natively on your host machine.
 
@@ -261,7 +261,33 @@ The React SPA will launch at: `http://localhost:5173`
 
 ---
 
-## 6. Cloud Hosting (Oracle Cloud / VPS Deployment)
+## 7. Cloud Hosting & Strategic Rationale (Oracle Cloud / VPS)
+
+### 💡 Strategic Rationale: Why Cloud Deployment if it wasn't in the Problem Statement?
+
+The original hackathon problem statement primarily focused on building a Unified Log Processing Framework with log normalization, MITRE ATT&CK correlation, and tamper-evident storage. **Team BEETLES consciously expanded the solution to include enterprise cloud deployment (specifically on Oracle Cloud Infrastructure / OCI VPS)** for five compelling architectural and evaluation reasons:
+
+1. **Zero-Friction Live Evaluation (Overcoming the "It Works on My Machine" Dilemma)**:
+   - Requiring judges, evaluators, or client stakeholders to clone repositories, build gigabytes of Docker images, configure Python/Node runtimes, or debug local Windows/Linux virtualization issues creates massive evaluation friction.
+   - Hosting a persistent live deployment in the cloud allows evaluators to **access, inspect, and evaluate the full live platform instantly from any browser on any device (laptop, tablet, or smartphone)** with zero local setup.
+
+2. **Proving True Multi-Tenant Isolation in a Real-World Distributed Environment**:
+   - While a local sandbox simulates multi-tenancy on `localhost:5173`, running on cloud infrastructure proves real-world concurrent multi-tenancy. Evaluators can create independent workspaces from their own separate physical devices, assign distinct roles (`Admin`, `Analyst`, `Auditor`), and observe that live telemetry, alerts, and audit trails remain 100% compartmentalized without cross-tenant leakage.
+
+3. **Decoupling the SOC & Preserving Tamper-Proof Evidence (Anti-Forensics Defense)**:
+   - In realistic cyber defense scenarios, hosting a SIEM on the *same physical machine* being monitored is an anti-pattern: an adversary who obtains local root/SYSTEM privileges can easily terminate the SIEM process, wipe local databases, or manipulate local system clocks.
+   - Decoupling the ingestion pipeline and WORM evidence repository to an external cloud instance guarantees that even if a local endpoint is compromised or encrypted by ransomware, all telemetry already transmitted to the cloud SIEM remains untampered and cryptographically sealed.
+
+4. **Validating Cross-Platform Remote Connectors Over the Public Internet**:
+   - ULPF includes native OS agent connectors (Windows Event Log tailer, Linux journald/syslog, macOS unified logs). Running them purely against `http://localhost:8000` is trivial; running them against an external cloud endpoint validates that our connectors reliably transmit encrypted telemetry across wide-area networks (WAN) over secure HTTPS/REST, handling network latency, automatic retries, and local buffering seamlessly.
+
+5. **Cost-Free Sovereign Cloud Blueprint for Public Sector & MSMEs**:
+   - Commercial enterprise SIEM solutions (Splunk, Datadog, Microsoft Sentinel) carry exorbitant licensing and cloud egress costs.
+   - We engineered and validated ULPF specifically to run comfortably on **Oracle Cloud Infrastructure (OCI) Always Free Tier** (4 OCPU Ampere A1 compute, 24 GB RAM, 200 GB block storage). This proves that government bodies, defense teams, law enforcement, and MSMEs can deploy an enterprise-grade, high-throughput SIEM pipeline with **₹0 cloud hosting costs**.
+
+---
+
+### Step-by-Step Cloud Deployment Guide (Oracle Cloud / Ubuntu / Debian VPS):
 
 To deploy ULPF on an Oracle Cloud Infrastructure (OCI) Free Tier compute instance (Ubuntu / Debian / Oracle Linux):
 
@@ -308,7 +334,7 @@ To deploy ULPF on an Oracle Cloud Infrastructure (OCI) Free Tier compute instanc
 
 ---
 
-## 7. Host Log Connectors (Windows, Linux, macOS)
+## 8. Host Log Connectors (Windows, Linux, macOS)
 
 ULPF features native cross-platform agent connectors to stream real-time operating system logs into the platform.
 
@@ -330,7 +356,7 @@ python connector.py
 
 ---
 
-## 8. Platform Architecture & Workspaces
+## 9. Platform Architecture & Workspaces
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -353,7 +379,7 @@ python connector.py
 
 ---
 
-## 9. Troubleshooting & FAQs
+## 10. Troubleshooting & FAQs
 
 ### Q: Port 5173 or 8000 is already in use
 **A:** Run cleanup or identify the offending process:
