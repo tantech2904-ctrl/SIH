@@ -24,6 +24,7 @@
 8. [Host Log Connectors (Windows, Linux, macOS)](#8-host-log-connectors-windows-linux-macos)
 9. [Platform Architecture & Workspaces](#9-platform-architecture--workspaces)
 10. [Troubleshooting & FAQs](#10-troubleshooting--faqs)
+11. 📄 [**Architecture Design Document (ADD - 2 Pages)**](docs/architecture_design_document.md)
 
 ---
 
@@ -357,6 +358,8 @@ python connector.py
 ---
 
 ## 9. Platform Architecture & Workspaces
+
+> 📘 **Detailed 2-Page Architecture Document**: See [Architecture Design Document (ADD)](docs/architecture_design_document.md) for full layer specifications, data pipeline flow, cryptographic chain formulas, and RBAC matrix.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
